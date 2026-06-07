@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {- |
    Module      : Text.Pandoc.Readers.CommonMark
@@ -19,25 +20,34 @@ where
 
 import Commonmark
 import Commonmark.Extensions
+import Commonmark.Inlines (InlineParser)
 import Commonmark.Pandoc
+import Commonmark.TokParsers (satisfyTok, symbol)
+import Control.Applicative ((<|>))
+import Data.Char (isAlphaNum)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Text.Pandoc.Class.PandocMonad (PandocMonad)
 import Text.Pandoc.Definition
 import Text.Pandoc.Builder as B
 import Text.Pandoc.Options
 import Text.Pandoc.Readers.Metadata (yamlMetaBlock)
-import Control.Monad (MonadPlus(mzero))
+import Control.Monad (MonadPlus(mzero), (<=<))
 import Control.Monad.Except (  MonadError(throwError) )
-import Data.Functor.Identity (runIdentity)
+import Control.Monad.State.Strict (State, evalState, get, put)
+import Data.Functor.Identity (Identity, runIdentity)
 import Data.Typeable
+import Text.Pandoc.Parsing.Citations (citeKey)
+import Text.Pandoc.Parsing.State (ParserState)
 import Text.Pandoc.Parsing (runParserT, getInput, getPosition,
-                            runF, defaultParserState, option, many1, anyChar,
+                            runF, defaultParserState, option, many1, many,
+                            manyTill, lookAhead, eof, try, notFollowedBy,
+                            anyChar,
                             Sources(..), ToSources(..), ParsecT, Future,
                             incSourceLine, fromParsecError)
-import Text.Pandoc.Walk (walk)
-import qualified Data.Text as T
+import Text.Pandoc.Walk (walk, walkM)
 import qualified Data.Attoparsec.Text as A
-import Control.Applicative ((<|>))
+import qualified Text.Parsec as P
 
 -- | Parse a CommonMark formatted string into a 'Pandoc' structure.
 readCommonMark :: (PandocMonad m, ToSources a)
@@ -100,6 +110,9 @@ readCommonMarkBody :: PandocMonad m => ReaderOptions -> Sources -> [Tok] -> m Pa
 readCommonMarkBody opts s toks =
   (if isEnabled Ext_implicit_figures opts
       then walk makeFigures
+      else id) .
+  (if isEnabled Ext_citations opts
+      then resolveCommonMarkCitations
       else id) .
   (if isEnabled Ext_tex_math_gfm opts
       then walk handleGfmMath
@@ -170,6 +183,8 @@ specFor opts = foldr ($) defaultSyntaxSpec exts
          [ (fancyListSpec <>) | isEnabled Ext_fancy_lists opts ] ++
          [ (fencedDivSpec <>) | isEnabled Ext_fenced_divs opts ] ++
          [ (bracketedSpanSpec <>) | isEnabled Ext_bracketed_spans opts ] ++
+         [ (commonmarkCitationSpec <>)
+           | isEnabled Ext_citations opts ] ++
          [ (rawAttributeSpec <>) | isEnabled Ext_raw_attribute opts ] ++
          [ (attributesSpec <>) | isEnabled Ext_attributes opts ] ++
          [ (alertSpec <>) | isEnabled Ext_alerts opts ] ++
@@ -194,3 +209,193 @@ specFor opts = foldr ($) defaultSyntaxSpec exts
            | isEnabled Ext_wikilinks_title_before_pipe opts ] ++
          [ (rebaseRelativePathsSpec <>)
            | isEnabled Ext_rebase_relative_paths opts ]
+
+commonmarkCitationSpec :: Monad m
+                       => SyntaxSpec m (Cm a Inlines) bl
+commonmarkCitationSpec = mempty
+  { syntaxInlineParsers =
+      [ citationGroupParser
+      , bareCitationParser
+      ]
+  }
+
+citationGroupParser :: Monad m => InlineParser m (Cm a Inlines)
+citationGroupParser = try $ do
+  symbol '['
+  notFollowedBy $ symbol '^'
+  toks <- manyTill anyCitationTok (symbol ']')
+  notFollowedByCitationSuffix
+  case parseCitationGroup (untokenize toks) of
+    Just citations ->
+      return $ Cm $ B.singleton $
+        Cite citations [Str $ "[" <> untokenize toks <> "]"]
+    Nothing -> mzero
+
+bareCitationParser :: Monad m => InlineParser m (Cm a Inlines)
+bareCitationParser = try $ do
+  suppressAuthor <- option False (True <$ symbol '-')
+  ident <- parseCitationId
+  let mode = if suppressAuthor then SuppressAuthor else AuthorInText
+  return $ Cm $ B.singleton $
+    Cite [emptyCitation ident mode]
+         [Str $ (if suppressAuthor then "-@" else "@") <> ident]
+
+notFollowedByCitationSuffix :: Monad m => InlineParser m ()
+notFollowedByCitationSuffix =
+  notFollowedBy $ symbol '(' <|> symbol '[' <|> symbol '{'
+
+anyCitationTok :: Monad m => InlineParser m Tok
+anyCitationTok = satisfyTok $ \case
+  Tok LineEnd _ _ -> False
+  _ -> True
+
+parseCitationId :: Monad m => InlineParser m Text
+parseCitationId = do
+  symbol '@'
+  bracedCitationId <|> simpleCitationId
+
+bracedCitationId :: Monad m => InlineParser m Text
+bracedCitationId = try $ do
+  symbol '{'
+  toks <- many1 $ satisfyTok $ \case
+    Tok Spaces _ _ -> False
+    Tok LineEnd _ _ -> False
+    Tok (Symbol '}') _ _ -> False
+    _ -> True
+  symbol '}'
+  return $ untokenize toks
+
+simpleCitationId :: Monad m => InlineParser m Text
+simpleCitationId = do
+  first <- satisfyTok isCitationIdStart
+  rest <- many $ satisfyTok isCitationIdRest
+  return $ untokenize (first:rest)
+
+isCitationIdStart :: Tok -> Bool
+isCitationIdStart = \case
+  Tok WordChars _ _ -> True
+  Tok (Symbol '_') _ _ -> True
+  Tok (Symbol '*') _ _ -> True
+  _ -> False
+
+isCitationIdRest :: Tok -> Bool
+isCitationIdRest = \case
+  Tok WordChars _ _ -> True
+  Tok (Symbol '_') _ _ -> True
+  Tok (Symbol c) _ _ -> c `elem` (":.#$%&-+?<>~/" :: String)
+  _ -> False
+
+resolveCommonMarkCitations :: Pandoc -> Pandoc
+resolveCommonMarkCitations =
+  flip evalState 1 .
+  walkM numberCitation .
+  walk suppressCitesInContainers .
+  walk suppressIntrawordCites
+
+numberCitation :: Inline -> State Int Inline
+numberCitation (Cite citations fallback) = do
+  noteNum <- get
+  put $ noteNum + 1
+  return $ Cite (map (\c -> c{ citationNoteNum = noteNum }) citations) fallback
+numberCitation x = return x
+
+suppressCitesInContainers :: Inline -> Inline
+suppressCitesInContainers (Link attr ils target) =
+  Link attr (concatMap citationToFallback ils) target
+suppressCitesInContainers (Span attr ils)
+  | isSourceposWrapper attr = Span attr ils
+  | otherwise = Span attr (concatMap citationToFallback ils)
+suppressCitesInContainers x = x
+
+suppressIntrawordCites :: [Inline] -> [Inline]
+suppressIntrawordCites = go []
+ where
+  go acc [] = reverse acc
+  go acc (x:xs)
+    | startsWithCitation x
+    , Just prev <- previousInline acc
+    , endsWithAlphaNum prev =
+        go (reverse (citationToFallback x) ++ acc) xs
+    | otherwise = go (x:acc) xs
+
+  previousInline [] = Nothing
+  previousInline (x:_) = Just x
+
+citationToFallback :: Inline -> [Inline]
+citationToFallback (Cite _ fallback) = fallback
+citationToFallback (Span attr ils) = [Span attr (concatMap citationToFallback ils)]
+citationToFallback (Link attr ils target) =
+  [Link attr (concatMap citationToFallback ils) target]
+citationToFallback x = [x]
+
+startsWithCitation :: Inline -> Bool
+startsWithCitation Cite{} = True
+startsWithCitation (Span attr [x])
+  | isSourceposWrapper attr = startsWithCitation x
+startsWithCitation _ = False
+
+lastMeaningful :: [Inline] -> Maybe Inline
+lastMeaningful = \case
+  [] -> Nothing
+  x:xs
+    | isSpaceInline x -> lastMeaningful xs
+    | otherwise -> Just x
+
+endsWithAlphaNum :: Inline -> Bool
+endsWithAlphaNum (Str t) =
+  case T.unsnoc t of
+    Just (_, c) -> isAlphaNum c
+    Nothing -> False
+endsWithAlphaNum (Span _ ils) =
+  maybe False endsWithAlphaNum $ lastMeaningful $ reverse ils
+endsWithAlphaNum _ = False
+
+isSourceposWrapper :: Attr -> Bool
+isSourceposWrapper ("", [], kvs) =
+  lookup "wrapper" kvs == Just "1" && lookup "data-pos" kvs /= Nothing
+isSourceposWrapper _ = False
+
+parseCitationGroup :: Text -> Maybe [Citation]
+parseCitationGroup =
+  nonEmpty <=< traverse parseCitationItem . filter (not . T.null) .
+    map T.strip . T.splitOn ";"
+ where
+  nonEmpty [] = Nothing
+  nonEmpty xs = Just xs
+
+parseCitationItem :: Text -> Maybe Citation
+parseCitationItem t =
+  either (const Nothing) Just $
+    P.runParser citationItemParser defaultParserState "citation" t
+
+citationItemParser :: ParsecT Text ParserState Identity Citation
+citationItemParser = do
+  prefix <- T.pack <$> manyTill anyChar (lookAhead $ citeKey True)
+  (suppressAuthor, ident) <- citeKey True
+  suffix <- T.pack <$> many anyChar
+  eof
+  let mode = if suppressAuthor then SuppressAuthor else NormalCitation
+  return (emptyCitation ident mode)
+    { citationPrefix = textInlines prefix
+    , citationSuffix = textInlines suffix
+    }
+
+emptyCitation :: Text -> CitationMode -> Citation
+emptyCitation ident mode = Citation
+  { citationId = ident
+  , citationPrefix = []
+  , citationSuffix = []
+  , citationMode = mode
+  , citationNoteNum = 0
+  , citationHash = 0
+  }
+
+textInlines :: Text -> [Inline]
+textInlines = B.toList . B.text . T.strip
+
+isSpaceInline :: Inline -> Bool
+isSpaceInline Space = True
+isSpaceInline SoftBreak = True
+isSpaceInline LineBreak = True
+isSpaceInline (Str t) = T.null t
+isSpaceInline _ = False

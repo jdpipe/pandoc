@@ -523,33 +523,7 @@ getAllExtensions f = universalExtensions <> getAll f
        , Ext_wikilinks_title_before_pipe
        , Ext_alerts
        ]
-  getAll "markdown_strict"   = allMarkdownExtensions
-  getAll "markdown_phpextra" = allMarkdownExtensions
-  getAll "markdown_mmd"      = allMarkdownExtensions
-  getAll "markdown_github"   = allMarkdownExtensions
-  getAll "markdown"          = allMarkdownExtensions
-  getAll "ipynb"             = allMarkdownExtensions <> extensionsFromList
-    [ Ext_raw_markdown ]
-  getAll "docx"            = autoIdExtensions <> extensionsFromList
-    [ Ext_empty_paragraphs
-    , Ext_native_numbering
-    , Ext_styles
-    , Ext_citations
-    ]
-  getAll "opendocument"    = extensionsFromList
-    [ Ext_empty_paragraphs
-    , Ext_native_numbering
-    , Ext_xrefs_name
-    , Ext_xrefs_number
-    ]
-  getAll "odt"             = getAll "opendocument" <> autoIdExtensions
-  getAll "muse"            = autoIdExtensions <>
-    extensionsFromList
-    [ Ext_amuse ]
-  getAll "asciidoc"        = autoIdExtensions
-  getAll "plain"           = allMarkdownExtensions
-  getAll "gfm"             = getAll "commonmark"
-  getAll "commonmark"      =
+  commonmarkExtensions =
     extensionsFromList
     [ Ext_gfm_auto_identifiers
     , Ext_ascii_identifiers
@@ -581,7 +555,35 @@ getAllExtensions f = universalExtensions <> getAll f
     , Ext_yaml_metadata_block
     , Ext_rebase_relative_paths
     ]
-  getAll "commonmark_x"    = getAll "commonmark"
+  getAll "markdown_strict"   = allMarkdownExtensions
+  getAll "markdown_phpextra" = allMarkdownExtensions
+  getAll "markdown_mmd"      = allMarkdownExtensions
+  getAll "markdown_github"   = allMarkdownExtensions
+  getAll "markdown"          = allMarkdownExtensions
+  getAll "ipynb"             = allMarkdownExtensions <> extensionsFromList
+    [ Ext_raw_markdown ]
+  getAll "docx"            = autoIdExtensions <> extensionsFromList
+    [ Ext_empty_paragraphs
+    , Ext_native_numbering
+    , Ext_styles
+    , Ext_citations
+    ]
+  getAll "opendocument"    = extensionsFromList
+    [ Ext_empty_paragraphs
+    , Ext_native_numbering
+    , Ext_xrefs_name
+    , Ext_xrefs_number
+    ]
+  getAll "odt"             = getAll "opendocument" <> autoIdExtensions
+  getAll "muse"            = autoIdExtensions <>
+    extensionsFromList
+    [ Ext_amuse ]
+  getAll "asciidoc"        = autoIdExtensions
+  getAll "plain"           = allMarkdownExtensions
+  getAll "gfm"             = getAll "commonmark"
+  getAll "commonmark"      = commonmarkExtensions
+  getAll "commonmark_x"    = commonmarkExtensions <>
+                              extensionsFromList [Ext_citations]
   getAll "org"             = autoIdExtensions <>
     extensionsFromList
     [ Ext_citations
