@@ -88,6 +88,33 @@ makeFigures (Para [Image (ident,classes,kvs) alt (src,tit)])
     [Plain [Image ("",classes,kvs) alt (src,tit)]]
 makeFigures b = b
 
+makeFigureDivs :: Block -> Block
+makeFigureDivs (Div (ident, classes, kvs) blocks)
+  | "figure" `elem` classes
+  , Just (body, figCaption) <- figureDivParts blocks =
+      Figure (ident, filter (/= "figure") classes, kvs) figCaption body
+makeFigureDivs b = b
+
+figureDivParts :: [Block] -> Maybe ([Block], Caption)
+figureDivParts blocks =
+  case break isCaptionDiv blocks of
+    (body, []) ->
+      Just (body, Caption Nothing [])
+    (before, Div (_, _, captionKvs) captionBlocks : after) ->
+      let shortCaption = lookup "short-caption" captionKvs >>= textShortCaption
+      in Just (before ++ after, Caption shortCaption captionBlocks)
+    _ ->
+      Nothing
+
+isCaptionDiv :: Block -> Bool
+isCaptionDiv (Div (_, classes, _) _) = "caption" `elem` classes
+isCaptionDiv _ = False
+
+textShortCaption :: Text -> Maybe [Inline]
+textShortCaption t
+  | T.null (T.strip t) = Nothing
+  | otherwise = Just (textInlines t)
+
 sourceToToks :: (SourcePos, Text) -> [Tok]
 sourceToToks (pos, s) = map adjust $ tokenize (sourceName pos) s
  where
@@ -108,6 +135,9 @@ metaValueParser opts = do
 
 readCommonMarkBody :: PandocMonad m => ReaderOptions -> Sources -> [Tok] -> m Pandoc
 readCommonMarkBody opts s toks =
+  (if isEnabled Ext_figure_divs opts
+      then walk makeFigureDivs
+      else id) .
   (if isEnabled Ext_implicit_figures opts
       then walk makeFigures
       else id) .
@@ -120,13 +150,85 @@ readCommonMarkBody opts s toks =
   (if readerStripComments opts
       then walk stripBlockComments . walk stripInlineComments
       else id) <$>
-  if isEnabled Ext_sourcepos opts
+  if isEnabled Ext_sourcepos opts || isEnabled Ext_sourcepos_sparse opts
      then case runIdentity (parseCommonmarkWith (specFor opts) toks) of
             Left err -> throwError $ fromParsecError s err
-            Right (Cm bls :: Cm SourceRange Blocks) -> return $ B.doc bls
+            Right (Cm bls :: Cm SourceRange Blocks) ->
+              return $ (if isEnabled Ext_sourcepos_sparse opts &&
+                           not (isEnabled Ext_sourcepos opts)
+                           then sparseSourcepos
+                           else id) $ B.doc bls
      else case runIdentity (parseCommonmarkWith (specFor opts) toks) of
             Left err -> throwError $ fromParsecError s err
             Right (Cm bls :: Cm () Blocks) -> return $ B.doc bls
+
+sparseSourceposStride :: Int
+sparseSourceposStride = 10
+
+sparseSourcepos :: Pandoc -> Pandoc
+sparseSourcepos = walk sparseSourceposInlines
+
+data SparseSourceposState = SparseSourceposState
+  { sparseSourceposWords :: !Int }
+
+sparseSourceposInlines :: [Inline] -> [Inline]
+sparseSourceposInlines ils =
+  evalState (concat <$> mapM sparseSourceposInline ils)
+            (SparseSourceposState 0)
+
+sparseSourceposInline :: Inline -> State SparseSourceposState [Inline]
+sparseSourceposInline inline@(Span attr ils)
+  | isSourceposWrapper attr = do
+      st <- get
+      let wordsSinceAnchor = sparseSourceposWords st + inlinesWordCount ils
+      let keepAnchor = containsSparseSourceposAnchor ils ||
+                       wordsSinceAnchor >= sparseSourceposStride
+      if keepAnchor
+         then put (SparseSourceposState 0) >> return [inline]
+         else put (SparseSourceposState wordsSinceAnchor) >> return ils
+sparseSourceposInline inline = do
+  st <- get
+  put $ SparseSourceposState $
+    sparseSourceposWords st + inlineWordCount inline
+  return [inline]
+
+containsSparseSourceposAnchor :: [Inline] -> Bool
+containsSparseSourceposAnchor = any go
+ where
+  go Code{} = True
+  go Cite{} = True
+  go Math{} = True
+  go Link{} = True
+  go Image{} = True
+  go (Emph ils) = containsSparseSourceposAnchor ils
+  go (Underline ils) = containsSparseSourceposAnchor ils
+  go (Strong ils) = containsSparseSourceposAnchor ils
+  go (Strikeout ils) = containsSparseSourceposAnchor ils
+  go (Superscript ils) = containsSparseSourceposAnchor ils
+  go (Subscript ils) = containsSparseSourceposAnchor ils
+  go (SmallCaps ils) = containsSparseSourceposAnchor ils
+  go (Quoted _ ils) = containsSparseSourceposAnchor ils
+  go (Span _ ils) = containsSparseSourceposAnchor ils
+  go _ = False
+
+inlinesWordCount :: [Inline] -> Int
+inlinesWordCount = sum . map inlineWordCount
+
+inlineWordCount :: Inline -> Int
+inlineWordCount (Str t) = length (T.words t)
+inlineWordCount (Emph ils) = inlinesWordCount ils
+inlineWordCount (Underline ils) = inlinesWordCount ils
+inlineWordCount (Strong ils) = inlinesWordCount ils
+inlineWordCount (Strikeout ils) = inlinesWordCount ils
+inlineWordCount (Superscript ils) = inlinesWordCount ils
+inlineWordCount (Subscript ils) = inlinesWordCount ils
+inlineWordCount (SmallCaps ils) = inlinesWordCount ils
+inlineWordCount (Quoted _ ils) = inlinesWordCount ils
+inlineWordCount (Cite _ ils) = inlinesWordCount ils
+inlineWordCount (Link _ ils _) = inlinesWordCount ils
+inlineWordCount (Image _ ils _) = inlinesWordCount ils
+inlineWordCount (Span _ ils) = inlinesWordCount ils
+inlineWordCount _ = 0
 
 handleGfmMath :: Block -> Block
 handleGfmMath (CodeBlock ("",["math"],[]) raw) = Para [Math DisplayMath raw]

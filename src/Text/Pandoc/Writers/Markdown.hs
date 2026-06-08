@@ -725,43 +725,46 @@ blockToMarkdown' opts (OrderedList (start,sty,delim) items) = do
 blockToMarkdown' opts (DefinitionList items) = do
   contents <- inList $ mapM (definitionListItemToMarkdown opts) items
   return $ mconcat contents <> blankline
-blockToMarkdown' opts (Figure figattr capt body) = do
-  let combinedAttr imgattr = case imgattr of
-        ("", cls, kvs)
-          | (figid, [], []) <- figattr
-            -> Just (figid, cls, [(k,v) | (k,v) <- kvs
-                                        , k /= "alt" ||
-                                          v /= "" && v /= trim (stringify capt)])
-        _ -> Nothing
-  case body of
-    [Plain [Image imgAttr alt (src, ttl)]]
-      | isEnabled Ext_implicit_figures opts
-      , Just imgAttr' <- combinedAttr imgAttr
-      , isEnabled Ext_link_attributes opts || imgAttr' == nullAttr
-        -> do
-          -- use implicit figures if possible
-          let tgt' = (src, fromMaybe ttl $ T.stripPrefix "fig:" ttl)
-          let descr = case capt of
-                        Caption _ bs -> blocksToInlines bs
-          -- add alt attribute if image description different from caption,
-          -- so this won't be lost:
-          let imgAttr'' = case imgAttr' of
-                            (i,c,kv)
-                              | not (null alt)
-                              , Nothing <- lookup "alt" kv
-                              , stringify descr /= stringify alt ->
-                                 (i, c, ("alt", stringify alt) : kv)
-                            _ -> imgAttr'
-          contents <- inlineListToMarkdown opts [Image imgAttr'' descr tgt']
-          return $ contents <> blankline
-    _ ->
-      -- fallback to raw html if possible or div otherwise
-      if isEnabled Ext_raw_html opts
-      then figureToMarkdown opts figattr capt body
-      else if (isEnabled Ext_fenced_divs opts || isEnabled Ext_native_divs opts) ||
-                  not (isEnabled Ext_implicit_figures opts)
-              then blockToMarkdown' opts $ figureDiv figattr capt body
-              else blockListToMarkdown opts body
+blockToMarkdown' opts (Figure figattr capt body)
+  | isEnabled Ext_figure_divs opts =
+      blockToMarkdown' opts $ figureDiv figattr capt body
+  | otherwise = do
+      let combinedAttr imgattr = case imgattr of
+            ("", cls, kvs)
+              | (figid, [], []) <- figattr
+                -> Just (figid, cls, [(k,v) | (k,v) <- kvs
+                                            , k /= "alt" ||
+                                              v /= "" && v /= trim (stringify capt)])
+            _ -> Nothing
+      case body of
+        [Plain [Image imgAttr alt (src, ttl)]]
+          | isEnabled Ext_implicit_figures opts
+          , Just imgAttr' <- combinedAttr imgAttr
+          , isEnabled Ext_link_attributes opts || imgAttr' == nullAttr
+            -> do
+              -- use implicit figures if possible
+              let tgt' = (src, fromMaybe ttl $ T.stripPrefix "fig:" ttl)
+              let descr = case capt of
+                            Caption _ bs -> blocksToInlines bs
+              -- add alt attribute if image description different from caption,
+              -- so this won't be lost:
+              let imgAttr'' = case imgAttr' of
+                                (i,c,kv)
+                                  | not (null alt)
+                                  , Nothing <- lookup "alt" kv
+                                  , stringify descr /= stringify alt ->
+                                     (i, c, ("alt", stringify alt) : kv)
+                                _ -> imgAttr'
+              contents <- inlineListToMarkdown opts [Image imgAttr'' descr tgt']
+              return $ contents <> blankline
+        _ ->
+          -- fallback to raw html if possible or div otherwise
+          if isEnabled Ext_raw_html opts
+          then figureToMarkdown opts figattr capt body
+          else if (isEnabled Ext_fenced_divs opts || isEnabled Ext_native_divs opts) ||
+                      not (isEnabled Ext_implicit_figures opts)
+                  then blockToMarkdown' opts $ figureDiv figattr capt body
+                  else blockListToMarkdown opts body
 
 inList :: Monad m => MD m a -> MD m a
 inList p = local (\env -> env {envInList = True}) p

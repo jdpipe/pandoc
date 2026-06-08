@@ -117,6 +117,7 @@ data Extension =
     | Ext_raw_markdown        -- ^ Parse markdown in ipynb as raw markdown
     | Ext_rebase_relative_paths -- ^ Rebase relative image and link paths,
                                 -- relative to directory of containing file
+    | Ext_figure_divs         -- ^ Interpret Divs with class figure as figures
     | Ext_short_subsuperscripts -- ^ sub-&superscripts w/o closing char (v~i)
     | Ext_shortcut_reference_links -- ^ Shortcut reference links
     | Ext_simple_tables       -- ^ Pandoc-style simple tables
@@ -124,6 +125,7 @@ data Extension =
     | Ext_smart_quotes        -- ^ "Smart" quotes
     | Ext_special_strings     -- ^ Treat certain strings like special characters
     | Ext_sourcepos           -- ^ Include source position attributes
+    | Ext_sourcepos_sparse    -- ^ Include sparse source position attributes
     | Ext_space_in_atx_header -- ^ Require space between # and header text
     | Ext_spaced_reference_links -- ^ Allow space between two parts of ref link
     | Ext_startnum            -- ^ Make start number of ordered list significant
@@ -549,7 +551,9 @@ getAllExtensions f = universalExtensions <> getAll f
     , Ext_raw_attribute
     , Ext_implicit_header_references
     , Ext_attributes
+    , Ext_figure_divs
     , Ext_sourcepos
+    , Ext_sourcepos_sparse
     , Ext_wikilinks_title_after_pipe
     , Ext_wikilinks_title_before_pipe
     , Ext_yaml_metadata_block

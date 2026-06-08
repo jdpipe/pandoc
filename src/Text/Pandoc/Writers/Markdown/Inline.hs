@@ -21,7 +21,7 @@ import Control.Monad.Reader
     ( asks, MonadReader(local) )
 import Control.Monad.State.Strict
     ( MonadState(get), gets, modify )
-import Data.Char (isAlphaNum, isDigit)
+import Data.Char (isAlphaNum, isDigit, isSpace)
 import Data.List (find, intersperse)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map as M
@@ -123,7 +123,11 @@ attrsToMarkdown :: WriterOptions -> Attr -> Doc Text
 attrsToMarkdown opts attribs = braces $ hsep [attribId, attribClasses, attribKeys]
         where attribId = case attribs of
                                 ("",_,_) -> empty
-                                (i,_,_)  -> "#" <> escAttr (writerIdentifierPrefix opts <> i)
+                                (i,_,_)
+                                  | T.any isSpace ident ->
+                                      "id=\"" <> escAttr ident <> "\""
+                                  | otherwise -> "#" <> escAttr ident
+                                  where ident = writerIdentifierPrefix opts <> i
               attribClasses = case attribs of
                                 (_,[],_) -> empty
                                 (_,cs,_) -> hsep $
@@ -699,9 +703,13 @@ inlineToMarkdown opts lnk@(Link attr@(ident,classes,kvs) txt (src, tit)) = do
           literal . T.strip <$>
             writeHtml5String opts{ writerTemplate = Nothing }
             (Pandoc nullMeta [Plain [lnk]])
-      | otherwise -> return $
-         "[" <> linktext <> "](" <> literal src <> linktitle <> ")" <>
-         linkAttributes opts attr
+      | otherwise -> do
+          let destination = case variant of
+                              Commonmark -> commonmarkLinkDestination src
+                              _          -> literal src
+          return $
+            "[" <> linktext <> "](" <> destination <> linktitle <> ")" <>
+            linkAttributes opts attr
 inlineToMarkdown opts img@(Image attr alternate (source, tit))
   | isEnabled Ext_raw_html opts &&
     not (isEnabled Ext_link_attributes opts || isEnabled Ext_attributes opts) &&
@@ -725,6 +733,7 @@ inlineToMarkdown opts img@(Image attr alternate (source, tit))
                 Markua -> cr <> attributes <> cr <> literal "![](" <>
                             literal source <> ")" <> cr
                 _ -> "!" <> linkPart
+
 inlineToMarkdown opts (Note contents) = do
   modify (\st -> st{ stNotes = contents : stNotes st })
   st <- get
@@ -732,6 +741,17 @@ inlineToMarkdown opts (Note contents) = do
   if isEnabled Ext_footnotes opts
      then return $ "[^" <> ref <> "]"
      else return $ "[" <> ref <> "]"
+
+commonmarkLinkDestination :: Text -> Doc Text
+commonmarkLinkDestination src
+  | T.any needsAngleBrackets src =
+      "<" <> literal (T.concatMap escapeAngleDestination src) <> ">"
+  | otherwise = literal src
+ where
+  needsAngleBrackets c = isSpace c || c == '<' || c == '>'
+  escapeAngleDestination c
+    | c == '\\' || c == '<' || c == '>' = T.pack ['\\', c]
+    | otherwise = T.singleton c
 
 makeMathPlainer :: [Inline] -> [Inline]
 makeMathPlainer = walk go
