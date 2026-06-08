@@ -27,7 +27,7 @@ import Control.Monad.Except (throwError)
 import Data.Containers.ListUtils (nubOrd)
 import Data.Char (isDigit, isLetter, isAlphaNum, toUpper, chr)
 import Data.Default
-import Data.List (intercalate)
+import Data.List (intercalate, intersperse)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, maybeToList)
 import qualified Data.Set as Set
@@ -729,6 +729,7 @@ inline = do
     CtrlSeq _   -> macroDef (rawInline "latex")
                   <|> inlineGroup
                   <|> inlineCommand'
+                  <|> cellTabularInline
                   <|> inlineEnvironment
     Esc1        -> str . T.singleton <$> primEscape
     Esc2        -> str . T.singleton <$> primEscape
@@ -736,6 +737,96 @@ inline = do
 
 inlines :: PandocMonad m => LP m Inlines
 inlines = mconcat <$> many inline
+
+cellTabularInline :: PandocMonad m => LP m Inlines
+cellTabularInline = try $ do
+  guardEnabled Ext_cell_tabulars
+  inTableCell <- sInTableCell <$> getState
+  guard inTableCell
+  controlSeq "begin"
+  name <- untokenize <$> braced
+  guard $ name == "tabular"
+  skipopts
+  colspec <- untokenize <$> braced
+  guard $ isSingleColumnTabularSpec colspec
+  rows <- many $ try $ do
+    spaces
+    skipMany cellTabularRule
+    spaces
+    notFollowedBy $ end_ name
+    rowToks <- manyTill anyTok $
+      lookAhead $ (() <$ cellTabularLineBreak) <|> (() <$ end_ name)
+    row <- parseCellTabularRow rowToks
+    optional cellTabularLineBreak
+    return row
+  spaces
+  skipMany cellTabularRule
+  spaces
+  end_ name
+  return $ mconcat $ intersperse linebreak $ trimCellTabularRows rows
+
+trimCellTabularRows :: [Inlines] -> [Inlines]
+trimCellTabularRows =
+  reverse . dropWhile isEmptyCellTabularRow .
+  reverse . dropWhile isEmptyCellTabularRow
+
+isEmptyCellTabularRow :: Inlines -> Bool
+isEmptyCellTabularRow =
+  all isEmptyCellTabularInline . B.toList
+
+isEmptyCellTabularInline :: Inline -> Bool
+isEmptyCellTabularInline Space = True
+isEmptyCellTabularInline SoftBreak = True
+isEmptyCellTabularInline LineBreak = True
+isEmptyCellTabularInline (Str t) = T.null (T.strip t)
+isEmptyCellTabularInline (Span _ ils) =
+  all isEmptyCellTabularInline ils
+isEmptyCellTabularInline _ = False
+
+parseCellTabularRow :: PandocMonad m => [Tok] -> LP m Inlines
+parseCellTabularRow toks = do
+  oldInTableCell <- sInTableCell <$> getState
+  updateState $ \st -> st{ sInTableCell = False }
+  result <- trimInlines <$> parseFromToks inlines toks
+  updateState $ \st -> st{ sInTableCell = oldInTableCell }
+  return result
+
+cellTabularLineBreak :: PandocMonad m => LP m ()
+cellTabularLineBreak =
+  void ((controlSeq "\\" <|> controlSeq "tabularnewline")
+         <* optional rawopt <* spaces)
+
+cellTabularRule :: PandocMonad m => LP m ()
+cellTabularRule =
+  void $ try $ spaces *> controlSeq "hline" <* optional rawopt <* spaces
+
+isSingleColumnTabularSpec :: Text -> Bool
+isSingleColumnTabularSpec spec =
+  countColumns spec == Just 1
+
+countColumns :: Text -> Maybe Int
+countColumns = go 0 . T.unpack
+ where
+  go n [] = Just n
+  go n (c:cs)
+    | c `elem` (" \t\r\n|" :: String) = go n cs
+  go n ('@':'{':cs) = go n =<< skipBalanced cs
+  go n ('>':'{':cs) = go n =<< skipBalanced cs
+  go n ('<':'{':cs) = go n =<< skipBalanced cs
+  go n ('!':'{':cs) = go n =<< skipBalanced cs
+  go n (c:'{':cs)
+    | c `elem` ("pmb" :: String) = go (n + 1) =<< skipBalanced cs
+  go n (c:cs)
+    | c `elem` ("lcr" :: String) = go (n + 1) cs
+  go _ _ = Nothing
+
+  skipBalanced = skipBalanced' (1 :: Int)
+
+  skipBalanced' 0 xs = Just xs
+  skipBalanced' _ [] = Nothing
+  skipBalanced' depth ('{':xs) = skipBalanced' (depth + 1) xs
+  skipBalanced' depth ('}':xs) = skipBalanced' (depth - 1) xs
+  skipBalanced' depth (_:xs) = skipBalanced' depth xs
 
 opt :: PandocMonad m => LP m Inlines
 opt = do

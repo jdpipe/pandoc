@@ -24,7 +24,7 @@ import Commonmark.Inlines (InlineParser)
 import Commonmark.Pandoc
 import Commonmark.TokParsers (satisfyTok, symbol)
 import Control.Applicative ((<|>))
-import Data.Char (isAlphaNum)
+import Data.Char (isAlphaNum, isSpace)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Text.Pandoc.Class.PandocMonad (PandocMonad)
@@ -113,6 +113,56 @@ makeTableDivBlocks (D.OrderedList attr items : rest) =
 makeTableDivBlocks (x : rest) = x : makeTableDivBlocks rest
 makeTableDivBlocks [] = []
 
+normalizeTableCellBreakBlocks :: [Block] -> [Block]
+normalizeTableCellBreakBlocks (Table attr capt specs thead tbodies tfoot : rest) =
+  Table attr capt specs
+    (normalizeTableCellBreakHead thead)
+    (map normalizeTableCellBreakBody tbodies)
+    (normalizeTableCellBreakFoot tfoot) : normalizeTableCellBreakBlocks rest
+normalizeTableCellBreakBlocks (Div attr blocks : rest) =
+  Div attr (normalizeTableCellBreakBlocks blocks) : normalizeTableCellBreakBlocks rest
+normalizeTableCellBreakBlocks (BlockQuote blocks : rest) =
+  BlockQuote (normalizeTableCellBreakBlocks blocks) : normalizeTableCellBreakBlocks rest
+normalizeTableCellBreakBlocks (D.BulletList items : rest) =
+  D.BulletList (map normalizeTableCellBreakBlocks items) :
+    normalizeTableCellBreakBlocks rest
+normalizeTableCellBreakBlocks (D.OrderedList attr items : rest) =
+  D.OrderedList attr (map normalizeTableCellBreakBlocks items) :
+    normalizeTableCellBreakBlocks rest
+normalizeTableCellBreakBlocks (x : rest) = x : normalizeTableCellBreakBlocks rest
+normalizeTableCellBreakBlocks [] = []
+
+normalizeTableCellBreakHead :: TableHead -> TableHead
+normalizeTableCellBreakHead (TableHead attr rows) =
+  TableHead attr (map normalizeTableRow rows)
+
+normalizeTableCellBreakBody :: TableBody -> TableBody
+normalizeTableCellBreakBody (TableBody attr rowHeadColumns headRows bodyRows) =
+  TableBody attr rowHeadColumns
+    (map normalizeTableRow headRows)
+    (map normalizeTableRow bodyRows)
+
+normalizeTableCellBreakFoot :: TableFoot -> TableFoot
+normalizeTableCellBreakFoot (TableFoot attr rows) =
+  TableFoot attr (map normalizeTableRow rows)
+
+normalizeTableRow :: Row -> Row
+normalizeTableRow (Row attr cells) =
+  Row attr (map normalizeTableCell cells)
+
+normalizeTableCell :: Cell -> Cell
+normalizeTableCell (Cell attr align rowspan colspan blocks) =
+  Cell attr align rowspan colspan (walk htmlBreakToLineBreak blocks)
+
+htmlBreakToLineBreak :: Inline -> Inline
+htmlBreakToLineBreak (RawInline (B.Format "html") s)
+  | isHtmlBreak s = LineBreak
+htmlBreakToLineBreak x = x
+
+isHtmlBreak :: Text -> Bool
+isHtmlBreak s =
+  T.toLower (T.filter (not . isSpace) s) `elem` ["<br>", "<br/>"]
+
 tableDivParts :: [Block] -> Maybe (Block, [Block])
 tableDivParts blocks =
   case break isTableBlock blocks of
@@ -187,7 +237,7 @@ readCommonMarkBody opts s toks =
   (\(Pandoc meta blocks) ->
       Pandoc meta $
         if isEnabled Ext_table_divs opts
-           then makeTableDivBlocks blocks
+           then normalizeTableCellBreakBlocks $ makeTableDivBlocks blocks
            else blocks) .
   (if isEnabled Ext_figure_divs opts
       then walk makeFigureDivs

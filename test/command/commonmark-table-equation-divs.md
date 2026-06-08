@@ -81,13 +81,13 @@ Plant location$^1$ & Daggett, CA \\ \hline
 \end{table}
 ^D
 ::::: {#tab:BaseValuePlant .table}
-| **Variables**      | **Value**   |
-|:-------------------|:------------|
-| Plant location$^1$ | Daggett, CA |
-
 ::: {.caption}
 Base case configuration of particle-based CSP plant.
 :::
+
+| **Variables**      | **Value**   |
+|:-------------------|:------------|
+| Plant location$^1$ | Daggett, CA |
 
 ::: {.tablenotes}
 1. @USDOE2019
@@ -100,13 +100,79 @@ Base case configuration of particle-based CSP plant.
 [Table ("tab:x",[],[]) (Caption Nothing [Plain [Str "Caption."]]) [(AlignDefault,ColWidthDefault)] (TableHead ("",[],[]) []) [] (TableFoot ("",[],[]) [])]
 ^D
 :::: {#tab:x .table}
-|     |
-|-----|
-
 ::: {.caption}
 Caption.
 :::
+
+|     |
+|-----|
 ::::
+```
+
+```
+% pandoc -f commonmark_x+table_divs -t native
+| **Upper<br>bound** | Value |
+|:---:|---|
+| $x$ | 1 |
+^D
+[ Table
+    ( "" , [] , [] )
+    (Caption Nothing [])
+    [ ( AlignCenter , ColWidthDefault )
+    , ( AlignDefault , ColWidthDefault )
+    ]
+    (TableHead
+       ( "" , [] , [] )
+       [ Row
+           ( "" , [] , [] )
+           [ Cell
+               ( "" , [] , [] )
+               AlignDefault
+               (RowSpan 1)
+               (ColSpan 1)
+               [ Plain
+                   [ Strong [ Str "Upper" , LineBreak , Str "bound" ] ]
+               ]
+           , Cell
+               ( "" , [] , [] )
+               AlignDefault
+               (RowSpan 1)
+               (ColSpan 1)
+               [ Plain [ Str "Value" ] ]
+           ]
+       ])
+    [ TableBody
+        ( "" , [] , [] )
+        (RowHeadColumns 0)
+        []
+        [ Row
+            ( "" , [] , [] )
+            [ Cell
+                ( "" , [] , [] )
+                AlignDefault
+                (RowSpan 1)
+                (ColSpan 1)
+                [ Plain [ Math InlineMath "x" ] ]
+            , Cell
+                ( "" , [] , [] )
+                AlignDefault
+                (RowSpan 1)
+                (ColSpan 1)
+                [ Plain [ Str "1" ] ]
+            ]
+        ]
+    ]
+    (TableFoot ( "" , [] , [] ) [])
+]
+```
+
+```
+% pandoc -f native -t commonmark_x+table_divs --wrap=none
+[Table ("",[],[]) (Caption Nothing []) [(AlignCenter,ColWidthDefault),(AlignDefault,ColWidthDefault)] (TableHead ("",[],[]) [Row ("",[],[]) [Cell ("",[],[]) AlignCenter (RowSpan 1) (ColSpan 1) [Plain [Strong [Str "Upper",LineBreak,Str "bound"]]],Cell ("",[],[]) AlignDefault (RowSpan 1) (ColSpan 1) [Plain [Str "Value"]]]]) [TableBody ("",[],[]) (RowHeadColumns 0) [] [Row ("",[],[]) [Cell ("",[],[]) AlignDefault (RowSpan 1) (ColSpan 1) [Plain [Math InlineMath "x"]],Cell ("",[],[]) AlignDefault (RowSpan 1) (ColSpan 1) [Plain [Str "1"]]]]] (TableFoot ("",[],[]) [])]
+^D
+| **Upper<br>bound** | Value |
+|:------------------:|-------|
+|        $x$         | 1     |
 ```
 
 ```

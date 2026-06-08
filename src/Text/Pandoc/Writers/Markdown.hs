@@ -178,6 +178,26 @@ shouldUseTableDiv _ = False
 captionHasContent :: Caption -> Bool
 captionHasContent (Caption short long) = maybe False (not . null) short || not (null long)
 
+onlySimpleTableCells' :: Bool -> [[[Block]]] -> Bool
+onlySimpleTableCells' allowLineBreaks = all isSimpleCell . concat
+  where
+    isSimpleCell [Plain ils] = allowLineBreaks || not (hasLineBreaks ils)
+    isSimpleCell [Para ils ] = allowLineBreaks || not (hasLineBreaks ils)
+    isSimpleCell []          = True
+    isSimpleCell _           = False
+
+tableCellBlockListToMarkdown :: PandocMonad m
+                             => WriterOptions -> [Block] -> MD m (Doc Text)
+tableCellBlockListToMarkdown opts =
+  blockListToMarkdown opts .
+    if isEnabled Ext_table_divs opts
+       then walk tableCellLineBreakToHtmlBreak
+       else id
+
+tableCellLineBreakToHtmlBreak :: Inline -> Inline
+tableCellLineBreakToHtmlBreak LineBreak = RawInline (Format "commonmark") "<br>"
+tableCellLineBreakToHtmlBreak x = x
+
 tableDiv :: Block -> [Block] -> Block
 tableDiv (Table (ident, classes, kvs) capt specs thead tbody tfoot) extras =
   let table = Table nullAttr (Caption Nothing []) specs thead tbody tfoot
@@ -187,7 +207,7 @@ tableDiv (Table (ident, classes, kvs) capt specs thead tbody tfoot) extras =
                     let captionKvs =
                           maybe mempty (\s -> [("short-caption", stringify s)]) short
                     in [Div ("", ["caption"], captionKvs) blocks]
-  in Div (ident, ["table"] `union` classes, kvs) (table : caption ++ extras)
+  in Div (ident, ["table"] `union` classes, kvs) (caption ++ table : extras)
 tableDiv block _ = block
 
 equationLabel :: Text -> Maybe Text
@@ -696,7 +716,8 @@ blockToMarkdown' opts t@(Table attr blkCapt specs thead tbody tfoot) = do
         | isEnabled Ext_table_captions opts
         = blankline $$ (": " <> caption'') $$ blankline
         | otherwise = blankline $$ caption'' $$ blankline
-  let hasSimpleCells = onlySimpleTableCells $ headers : rows
+  let hasSimpleCells =
+        onlySimpleTableCells' (isEnabled Ext_table_divs opts) $ headers : rows
   let isSimple = hasSimpleCells && not hasFooter &&
                  all (==0) widths && not hasColRowSpans
   let isPlainBlock (Plain _) = True
@@ -712,8 +733,8 @@ blockToMarkdown' opts t@(Table attr blkCapt specs thead tbody tfoot) = do
                      x | x > 0 -> widths ++ replicate x 0.0
                        | otherwise -> widths
   let mkTable f = do
-       rawHeaders <- padRow <$> mapM (blockListToMarkdown opts) headers
-       rawRows <- mapM (fmap padRow . mapM (blockListToMarkdown opts)) rows
+       rawHeaders <- padRow <$> mapM (tableCellBlockListToMarkdown opts) headers
+       rawRows <- mapM (fmap padRow . mapM (tableCellBlockListToMarkdown opts)) rows
        f (all null headers) aligns' widths' rawHeaders rawRows
   case True of
      _ | isSimple &&

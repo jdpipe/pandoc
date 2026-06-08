@@ -23,6 +23,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Text.Pandoc.Class.PandocMonad (PandocMonad)
 import Text.Pandoc.Definition
+import Text.Pandoc.Extensions (Extension(Ext_cell_tabulars))
 import Text.DocLayout
   ( Doc, braces, cr, empty, hcat, hsep, isEmpty, literal, nest
   , text, vcat, ($$) )
@@ -38,7 +39,7 @@ import Text.Pandoc.Writers.LaTeX.Util (labelFor)
 import Text.Printf (printf)
 import qualified Text.Pandoc.Builder as B
 import qualified Text.Pandoc.Writers.AnnotatedTable as Ann
-import Text.Pandoc.Options (CaptionPosition(..), WriterOptions(..))
+import Text.Pandoc.Options (CaptionPosition(..), WriterOptions(..), isEnabled)
 
 tableToLaTeX :: PandocMonad m
              => ([Inline] -> LW m (Doc Text))
@@ -54,8 +55,10 @@ tableToLaTeX inlnsToLaTeX blksToLaTeX tbl = do
   let hasBottomCaption = not (isEmpty capt) &&
                           writerTableCaptionPosition opts == CaptionBelow
   let isSimpleTable =
+        let allowCellTabulars = isEnabled Ext_cell_tabulars opts
+        in
         all ((== ColWidthDefault) . snd) specs &&
-        all (all isSimpleCell)
+        all (all (isSimpleCell allowCellTabulars))
           (mconcat [ headRows thead
                    , concatMap bodyRows tbodies
                    , footRows tfoot
@@ -123,11 +126,11 @@ tableToLaTeX inlnsToLaTeX blksToLaTeX tbl = do
     $$ captNotes
     $$ notes
 
-isSimpleCell :: Ann.Cell -> Bool
-isSimpleCell (Ann.Cell _ _ (Cell _attr _align _rowspan _colspan blocks)) =
+isSimpleCell :: Bool -> Ann.Cell -> Bool
+isSimpleCell allowLineBreaks (Ann.Cell _ _ (Cell _attr _align _rowspan _colspan blocks)) =
   case blocks of
-    [Para _]  -> not (hasLineBreak blocks)
-    [Plain _] -> not (hasLineBreak blocks)
+    [Para _]  -> allowLineBreaks || not (hasLineBreak blocks)
+    [Plain _] -> allowLineBreaks || not (hasLineBreak blocks)
     []        -> True
     _         -> False
   where
@@ -285,13 +288,15 @@ footRows :: Ann.TableFoot -> [[Ann.Cell]]
 footRows (Ann.TableFoot _attr rows) = map headerRowCells rows
 
 -- For simple latex tables (without minipages or parboxes),
--- we need to go to some lengths to get line breaks working:
--- as LineBreak bs = \vtop{\hbox{\strut as}\hbox{\strut bs}}.
-fixLineBreaks :: Block -> Block
-fixLineBreaks = walk fixLineBreaks'
+-- we need to go to some lengths to get line breaks working.
+fixLineBreaks :: Bool -> Alignment -> Block -> Block
+fixLineBreaks useCellTabulars align =
+  walk $ if useCellTabulars
+            then fixLineBreaksWithCellTabular align
+            else fixLineBreaksWithVTop
 
-fixLineBreaks' :: [Inline] -> [Inline]
-fixLineBreaks' ils = case splitBy (== LineBreak) ils of
+fixLineBreaksWithVTop :: [Inline] -> [Inline]
+fixLineBreaksWithVTop ils = case splitBy (== LineBreak) ils of
                        []     -> []
                        [xs]   -> xs
                        chunks -> RawInline "tex" "\\vtop{" :
@@ -299,6 +304,22 @@ fixLineBreaks' ils = case splitBy (== LineBreak) ils of
                                  [RawInline "tex" "}"]
   where tohbox ys = RawInline "tex" "\\hbox{\\strut " : ys <>
                     [RawInline "tex" "}"]
+
+fixLineBreaksWithCellTabular :: Alignment -> [Inline] -> [Inline]
+fixLineBreaksWithCellTabular align ils =
+  case splitBy (== LineBreak) ils of
+       []     -> []
+       [xs]   -> xs
+       chunks ->
+         RawInline "tex" ("\\begin{tabular}[c]{@{}" <> cellTabularAlign align <> "@{}}") :
+         concat (intersperse [RawInline "tex" "\\\\"] chunks) <>
+         [RawInline "tex" "\\end{tabular}"]
+
+cellTabularAlign :: Alignment -> Text
+cellTabularAlign = \case
+  AlignCenter -> "c"
+  AlignRight  -> "r"
+  _           -> "l"
 
 -- We also change display math to inline math, since display
 -- math breaks in simple tables.
@@ -322,6 +343,8 @@ cellToLaTeX blockListToLaTeX isSimpleTable colCount celltype annotatedCell = do
   let align = case align' of
                 AlignDefault -> specAlign
                 _            -> align'
+  opts <- gets stOptions
+  let useCellTabulars = isEnabled Ext_cell_tabulars opts
   beamer <- gets stBeamer
   externalNotes <- gets stExternalNotes
   -- See #5367 -- footnotehyper/footnote don't work in beamer,
@@ -339,7 +362,9 @@ cellToLaTeX blockListToLaTeX isSimpleTable colCount celltype annotatedCell = do
                            && all isPlainOrPara blocks
                            && not hasLineBreaks)
        then
-         blockListToLaTeX $ walk fixLineBreaks $ walk displayMathToInline blocks
+         blockListToLaTeX $
+           walk (fixLineBreaks useCellTabulars align) $
+             walk displayMathToInline blocks
        else do
          cellContents <- inMinipage $ blockListToLaTeX blocks
          let valign = text $ case celltype of

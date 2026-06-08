@@ -58,6 +58,7 @@ data Extension =
     | Ext_blank_before_blockquote -- ^ Require blank line before a blockquote
     | Ext_blank_before_header     -- ^ Require blank line before a header
     | Ext_bracketed_spans         -- ^ Bracketed spans with attributes
+    | Ext_cell_tabulars       -- ^ Flatten/recreate one-column tabulars in LaTeX table cells
     | Ext_citations           -- ^ Pandoc/citeproc citations
     | Ext_definition_lists    -- ^ Definition lists as in pandoc, mmd, php
     | Ext_east_asian_line_breaks  -- ^ Newlines in paragraphs are ignored between
@@ -625,6 +626,7 @@ getAllExtensions f = universalExtensions <> getAll f
   getAll "latex"           = autoIdExtensions <>
     extensionsFromList
     [ Ext_smart
+    , Ext_cell_tabulars
     , Ext_latex_macros
     , Ext_raw_tex
     , Ext_task_lists

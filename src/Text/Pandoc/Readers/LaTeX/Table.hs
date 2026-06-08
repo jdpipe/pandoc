@@ -15,6 +15,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Control.Applicative ((<|>), optional, many)
 import Control.Monad (when, void)
+import Text.Pandoc.Extensions (Extension(Ext_cell_tabulars))
 import Text.Pandoc.Shared (safeRead, trim)
 import Text.Pandoc.Logging (LogMessage(SkippedContent))
 import Text.Pandoc.Walk (walkM)
@@ -171,16 +172,16 @@ parseTableRow block inline envname prefsufs = do
         option [] (count 1 amp)
         return $ map (setpos prefpos) pref ++ contents ++ map (setpos suffpos) suff
   rawcells <- mapM celltoks prefsufs
-  cells <- mapM (parseFromToks (parseTableCell block)) rawcells
+  cells <- mapM (parseFromToks (parseTableCell block inline)) rawcells
   spaces
   return $ Row nullAttr cells
 
-parseTableCell :: PandocMonad m => LP m Blocks -> LP m Cell
-parseTableCell block = do
+parseTableCell :: PandocMonad m => LP m Blocks -> LP m Inlines -> LP m Cell
+parseTableCell block inline = do
   spaces
   updateState $ \st -> st{ sInTableCell = True }
-  cell' <-   multicolumnCell block
-         <|> multirowCell block
+  cell' <-   multicolumnCell block inline
+         <|> multirowCell block inline
          <|> parseSimpleCell
          <|> parseEmptyCell
   updateState $ \st -> st{ sInTableCell = False }
@@ -190,8 +191,17 @@ parseTableCell block = do
     -- The parsing of empty cells is important in LaTeX, especially when dealing
     -- with multirow/multicolumn. See #6603.
     parseEmptyCell = spaces $> emptyCell
-    parseSimpleCell = simpleCell <$> (plainify . mconcat <$> many block)
+    parseSimpleCell =
+      simpleCell <$> (cellInlineBlocks inline <|>
+                      (plainify . mconcat <$> many block))
 
+cellInlineBlocks :: PandocMonad m => LP m Inlines -> LP m Blocks
+cellInlineBlocks inline = try $ do
+  guardEnabled Ext_cell_tabulars
+  result <- plain . trimInlines . mconcat <$> many inline
+  spaces
+  eof
+  return result
 
 cellAlignment :: PandocMonad m => LP m Alignment
 cellAlignment = skipMany (symbol '|') *> alignment <* skipMany (symbol '|')
@@ -210,8 +220,8 @@ plainify bs = case toList bs of
                 [Para ils] -> plain (fromList ils)
                 _          -> bs
 
-multirowCell :: PandocMonad m => LP m Blocks -> LP m Cell
-multirowCell block = controlSeq "multirow" >> do
+multirowCell :: PandocMonad m => LP m Blocks -> LP m Inlines -> LP m Cell
+multirowCell block inline = controlSeq "multirow" >> do
   -- Full prototype for \multirow macro is:
   --     \multirow[vpos]{nrows}[bigstruts]{width}[vmove]{text}
   -- However, everything except `nrows` and `text` make
@@ -221,16 +231,23 @@ multirowCell block = controlSeq "multirow" >> do
   _ <- optional $ symbol '[' *> manyTill anyTok (symbol ']')  -- bigstrut-related
   _ <- symbol '{' *> manyTill anyTok (symbol '}')             -- Cell width
   _ <- optional $ symbol '[' *> manyTill anyTok (symbol ']')  -- Length used for fine-tuning
-  content <- symbol '{' *> (plainify . mconcat <$> many block) <* symbol '}'
+  content <- bracedCellBlocks block inline
   return $ cell AlignDefault (RowSpan nrows) (ColSpan 1) content
 
-multicolumnCell :: PandocMonad m => LP m Blocks -> LP m Cell
-multicolumnCell block = controlSeq "multicolumn" >> do
+bracedCellBlocks :: PandocMonad m => LP m Blocks -> LP m Inlines -> LP m Blocks
+bracedCellBlocks block inline =
+  symbol '{' *>
+    (try (do guardEnabled Ext_cell_tabulars
+             plain . trimInlines . mconcat <$> many inline <* symbol '}') <|>
+     (plainify . mconcat <$> many block <* symbol '}'))
+
+multicolumnCell :: PandocMonad m => LP m Blocks -> LP m Inlines -> LP m Cell
+multicolumnCell block inline = controlSeq "multicolumn" >> do
   span' <- fmap (fromMaybe 1 . safeRead . untokenize) braced
   alignment <- symbol '{' *> cellAlignment <* symbol '}'
 
   let singleCell = do
-        content <- plainify . mconcat <$> many block
+        content <- cellInlineBlocks inline <|> (plainify . mconcat <$> many block)
         return $ cell alignment (RowSpan 1) (ColSpan span') content
 
   -- Two possible contents: either a \multirow cell, or content.
@@ -238,7 +255,7 @@ multicolumnCell block = controlSeq "multicolumn" >> do
   -- Note that a \multirow cell can be nested in a \multicolumn,
   -- but not the other way around. See #6603
   let nestedCell = do
-        (Cell _ _ (RowSpan rs) _ bs) <- multirowCell block
+        (Cell _ _ (RowSpan rs) _ bs) <- multirowCell block inline
         return $ cell
                   alignment
                   (RowSpan rs)
