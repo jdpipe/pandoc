@@ -29,6 +29,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Text.Pandoc.Class.PandocMonad (PandocMonad)
 import Text.Pandoc.Definition
+import qualified Text.Pandoc.Definition as D
 import Text.Pandoc.Builder as B
 import Text.Pandoc.Options
 import Text.Pandoc.Readers.Metadata (yamlMetaBlock)
@@ -95,6 +96,54 @@ makeFigureDivs (Div (ident, classes, kvs) blocks)
       Figure (ident, filter (/= "figure") classes, kvs) figCaption body
 makeFigureDivs b = b
 
+makeTableDivBlocks :: [Block] -> [Block]
+makeTableDivBlocks (Div (ident, classes, kvs) blocks : rest)
+  | "table" `elem` classes
+  , Just (tbl, extra) <- tableDivParts blocks =
+      tableWithDivParts ident (filter (/= "table") classes) kvs tbl extra ++
+      makeTableDivBlocks rest
+makeTableDivBlocks (Div attr blocks : rest) =
+  Div attr (makeTableDivBlocks blocks) : makeTableDivBlocks rest
+makeTableDivBlocks (BlockQuote blocks : rest) =
+  BlockQuote (makeTableDivBlocks blocks) : makeTableDivBlocks rest
+makeTableDivBlocks (D.BulletList items : rest) =
+  D.BulletList (map makeTableDivBlocks items) : makeTableDivBlocks rest
+makeTableDivBlocks (D.OrderedList attr items : rest) =
+  D.OrderedList attr (map makeTableDivBlocks items) : makeTableDivBlocks rest
+makeTableDivBlocks (x : rest) = x : makeTableDivBlocks rest
+makeTableDivBlocks [] = []
+
+tableDivParts :: [Block] -> Maybe (Block, [Block])
+tableDivParts blocks =
+  case break isTableBlock blocks of
+    (_, []) -> Nothing
+    (before, tbl : after) ->
+      Just (tbl, before ++ after)
+
+isTableBlock :: Block -> Bool
+isTableBlock Table{} = True
+isTableBlock _ = False
+
+tableWithDivParts :: Text -> [Text] -> [(Text, Text)] -> Block -> [Block] -> [Block]
+tableWithDivParts ident classes kvs
+  (Table _ _ specs thead tbody tfoot) blocks =
+    let (captionBlocks, otherBlocks) = extractCaptionBlocks blocks
+        tbl = Table
+          (ident, classes, kvs)
+          (Caption Nothing captionBlocks)
+          specs
+          thead
+          tbody
+          tfoot
+    in tbl : otherBlocks
+tableWithDivParts _ _ _ tbl blocks = tbl : blocks
+
+extractCaptionBlocks :: [Block] -> ([Block], [Block])
+extractCaptionBlocks blocks =
+  case break isCaptionDiv blocks of
+    (before, Div _ captionBlocks : after) -> (captionBlocks, before ++ after)
+    _ -> ([], blocks)
+
 figureDivParts :: [Block] -> Maybe ([Block], Caption)
 figureDivParts blocks =
   case break isCaptionDiv blocks of
@@ -135,6 +184,11 @@ metaValueParser opts = do
 
 readCommonMarkBody :: PandocMonad m => ReaderOptions -> Sources -> [Tok] -> m Pandoc
 readCommonMarkBody opts s toks =
+  (\(Pandoc meta blocks) ->
+      Pandoc meta $
+        if isEnabled Ext_table_divs opts
+           then makeTableDivBlocks blocks
+           else blocks) .
   (if isEnabled Ext_figure_divs opts
       then walk makeFigureDivs
       else id) .
@@ -337,10 +391,28 @@ bareCitationParser :: Monad m => InlineParser m (Cm a Inlines)
 bareCitationParser = try $ do
   suppressAuthor <- option False (True <$ symbol '-')
   ident <- parseCitationId
+  let (ident', trailingPunctuation) = splitTrailingCitationPunctuation ident
   let mode = if suppressAuthor then SuppressAuthor else AuthorInText
-  return $ Cm $ B.singleton $
-    Cite [emptyCitation ident mode]
-         [Str $ (if suppressAuthor then "-@" else "@") <> ident]
+  let citationInline = Cite [emptyCitation ident' mode]
+                            [Str $ (if suppressAuthor then "-@" else "@") <> ident']
+  let trailing =
+        if T.null trailingPunctuation
+           then mempty
+           else B.singleton $ Str trailingPunctuation
+  return $ Cm $ B.singleton citationInline <> trailing
+
+splitTrailingCitationPunctuation :: Text -> (Text, Text)
+splitTrailingCitationPunctuation ident =
+  let (punctuation', base') = T.span isTrailingCitationPunctuation (T.reverse ident)
+      base = T.reverse base'
+      punctuation = T.reverse punctuation'
+  in if T.null base
+        then (ident, "")
+        else (base, punctuation)
+
+isTrailingCitationPunctuation :: Char -> Bool
+isTrailingCitationPunctuation c =
+  c `elem` (".,;:!?" :: String)
 
 notFollowedByCitationSuffix :: Monad m => InlineParser m ()
 notFollowedByCitationSuffix =

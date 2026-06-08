@@ -118,6 +118,8 @@ data Extension =
     | Ext_rebase_relative_paths -- ^ Rebase relative image and link paths,
                                 -- relative to directory of containing file
     | Ext_figure_divs         -- ^ Interpret Divs with class figure as figures
+    | Ext_table_divs          -- ^ Interpret Divs with class table as tables
+    | Ext_equation_divs       -- ^ Use Divs with class equation for labelled display math
     | Ext_short_subsuperscripts -- ^ sub-&superscripts w/o closing char (v~i)
     | Ext_shortcut_reference_links -- ^ Shortcut reference links
     | Ext_simple_tables       -- ^ Pandoc-style simple tables
@@ -552,6 +554,8 @@ getAllExtensions f = universalExtensions <> getAll f
     , Ext_implicit_header_references
     , Ext_attributes
     , Ext_figure_divs
+    , Ext_table_divs
+    , Ext_equation_divs
     , Ext_sourcepos
     , Ext_sourcepos_sparse
     , Ext_wikilinks_title_after_pipe

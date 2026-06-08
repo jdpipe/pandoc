@@ -61,6 +61,28 @@ Mesh overview.
 ```
 
 ```
+% pandoc -f latex -t commonmark_x+figure_divs
+\begin{figure}
+\includegraphics{figs/mesh.pdf}
+\caption{Mesh overview.}
+\label{fig:mesh}
+\end{figure}
+
+Figure \ref{fig:mesh}; \autoref{fig:mesh}.
+^D
+:::: {#fig:mesh .figure}
+![](figs/mesh.pdf)
+
+::: {.caption}
+Mesh overview.
+:::
+::::
+
+Figure [](#fig:mesh){reference-type="ref" reference="fig:mesh"};
+[](#fig:mesh){reference-type="ref+label" reference="fig:mesh"}.
+```
+
+```
 % pandoc -f native -t commonmark_x+figure_divs
 [Figure ("fig:optimisation diagram",[],[]) (Caption Nothing [Plain [Str "Optimisation",Space,Str "diagram."]]) [Plain [Image ("",[],[]) [] ("figs/optimisation-technique.pdf","")]]]
 ^D

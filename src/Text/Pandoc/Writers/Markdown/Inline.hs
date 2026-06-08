@@ -197,6 +197,14 @@ linkAttributes opts attr =
      then attrsToMarkdown opts attr
      else empty
 
+isResolvedReferenceLink :: Attr -> Text -> Bool
+isResolvedReferenceLink (_, _, kvs) src =
+  case lookup "reference" kvs of
+       Just ref
+         | Just _ <- lookup "reference-type" kvs
+         , src == "#" <> ref -> True
+       _ -> False
+
 getKey :: Doc Text -> Key
 getKey = toKey . render Nothing
 
@@ -649,7 +657,10 @@ inlineToMarkdown opts (Cite (c:cs) lst)
         modekey _              = ""
 inlineToMarkdown opts lnk@(Link attr@(ident,classes,kvs) txt (src, tit)) = do
   variant <- asks envVariant
-  linktext <- inlineListToMarkdown opts txt
+  let isResolvedRef = isResolvedReferenceLink attr src
+  linktext <- if isResolvedRef
+                 then return empty
+                 else inlineListToMarkdown opts txt
   let linktitle = if T.null tit
                      then empty
                      else literal $ " \"" <> tit <> "\""
@@ -664,7 +675,7 @@ inlineToMarkdown opts lnk@(Link attr@(ident,classes,kvs) txt (src, tit)) = do
   let useWikilink = "wikilink" `elem` classes &&
                     (isEnabled Ext_wikilinks_title_after_pipe opts ||
                      isEnabled Ext_wikilinks_title_before_pipe opts)
-  let useRefLinks = writerReferenceLinks opts && not useAuto
+  let useRefLinks = writerReferenceLinks opts && not useAuto && not isResolvedRef
   shortcutable <- asks envRefShortcutable
   let useShortcutRefLinks = shortcutable &&
                              (variant == Commonmark ||

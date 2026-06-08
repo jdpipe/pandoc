@@ -102,6 +102,55 @@ see @doe
 ```
 
 ```
+% pandoc -f commonmark_x+citations -t native
+@doe.
+-@roe?
+@smith.v2.
+^D
+[ Para
+    [ Cite
+        [ Citation
+            { citationId = "doe"
+            , citationPrefix = []
+            , citationSuffix = []
+            , citationMode = AuthorInText
+            , citationNoteNum = 1
+            , citationHash = 0
+            }
+        ]
+        [ Str "@doe" ]
+    , Str "."
+    , SoftBreak
+    , Cite
+        [ Citation
+            { citationId = "roe"
+            , citationPrefix = []
+            , citationSuffix = []
+            , citationMode = SuppressAuthor
+            , citationNoteNum = 2
+            , citationHash = 0
+            }
+        ]
+        [ Str "-@roe" ]
+    , Str "?"
+    , SoftBreak
+    , Cite
+        [ Citation
+            { citationId = "smith.v2"
+            , citationPrefix = []
+            , citationSuffix = []
+            , citationMode = AuthorInText
+            , citationNoteNum = 3
+            , citationHash = 0
+            }
+        ]
+        [ Str "@smith.v2" ]
+    , Str "."
+    ]
+]
+```
+
+```
 % pandoc -f commonmark_x+citations+sourcepos -t native
 [@doe]
 ^D

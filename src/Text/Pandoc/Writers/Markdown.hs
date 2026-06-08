@@ -145,6 +145,60 @@ plainTitleBlock tit auths dat =
   hcat (intersperse (text "; ") auths) <> cr <>
   dat <> cr
 
+prepareBlocksForMarkdown :: WriterOptions -> [Block] -> [Block]
+prepareBlocksForMarkdown opts =
+  if isEnabled Ext_table_divs opts
+     then makeTableDivs
+     else id
+
+makeTableDivs :: [Block] -> [Block]
+makeTableDivs (table@(Table _ _ _ _ _ _) : notes@(Div (_, classes, _) _) : rest)
+  | "tablenotes" `elem` classes
+  , shouldUseTableDiv table =
+      tableDiv table [notes] : makeTableDivs rest
+makeTableDivs (table@(Table _ _ _ _ _ _) : rest)
+  | shouldUseTableDiv table =
+      tableDiv table [] : makeTableDivs rest
+makeTableDivs (Div attr blocks : rest) =
+  Div attr (makeTableDivs blocks) : makeTableDivs rest
+makeTableDivs (BulletList items : rest) =
+  BulletList (map makeTableDivs items) : makeTableDivs rest
+makeTableDivs (OrderedList attr items : rest) =
+  OrderedList attr (map makeTableDivs items) : makeTableDivs rest
+makeTableDivs (BlockQuote blocks : rest) =
+  BlockQuote (makeTableDivs blocks) : makeTableDivs rest
+makeTableDivs (x : rest) = x : makeTableDivs rest
+makeTableDivs [] = []
+
+shouldUseTableDiv :: Block -> Bool
+shouldUseTableDiv (Table attr capt _ _ _ _) =
+  attr /= nullAttr || captionHasContent capt
+shouldUseTableDiv _ = False
+
+captionHasContent :: Caption -> Bool
+captionHasContent (Caption short long) = maybe False (not . null) short || not (null long)
+
+tableDiv :: Block -> [Block] -> Block
+tableDiv (Table (ident, classes, kvs) capt specs thead tbody tfoot) extras =
+  let table = Table nullAttr (Caption Nothing []) specs thead tbody tfoot
+      caption = case capt of
+                  Caption _ [] -> []
+                  Caption short blocks ->
+                    let captionKvs =
+                          maybe mempty (\s -> [("short-caption", stringify s)]) short
+                    in [Div ("", ["caption"], captionKvs) blocks]
+  in Div (ident, ["table"] `union` classes, kvs) (table : caption ++ extras)
+tableDiv block _ = block
+
+equationLabel :: Text -> Maybe Text
+equationLabel str =
+  case T.breakOn "\\label{" str of
+       (_, rest)
+         | not (T.null rest) ->
+             let label = T.takeWhile (/= '}') $ T.drop 7 rest
+             in if T.null label then Nothing else Just label
+       _ -> Nothing
+
 yamlMetadataBlock :: Context Text -> Doc Text
 yamlMetadataBlock v = "---" $$ contextToYaml v $$ "---"
 
@@ -248,7 +302,7 @@ pandocToMarkdown opts (Pandoc meta blocks) = do
                              (Div ("refs",_,_) _):xs -> reverse xs
                              _                       -> blocks
                    else blocks
-  body <- blockListToMarkdown opts blocks'
+  body <- blockListToMarkdown opts (prepareBlocksForMarkdown opts blocks')
   notesAndRefs' <- notesAndRefs opts
   let main = body <> notesAndRefs'
   let context  = -- for backwards compatibility we populate toc
@@ -257,7 +311,7 @@ pandocToMarkdown opts (Pandoc meta blocks) = do
                  defField "toc" toc
                $ defField "table-of-contents" toc
                $ defField "body" main
-               $ (if isNullMeta meta
+                 $ (if isNullMeta meta
                      then id
                      else defField "titleblock" titleblock)
                $ addVariablesToContext opts metadata
@@ -443,6 +497,14 @@ blockToMarkdown' opts (Plain inlines) = do
                   _ -> inlines
   contents <- inlineListToMarkdown opts inlines'
   return $ contents <> cr
+blockToMarkdown' opts (Para [Math DisplayMath str])
+  | isEnabled Ext_equation_divs opts
+  , Just ident <- equationLabel str =
+      let opts' = opts{ writerExtensions =
+                          disableExtension Ext_equation_divs
+                            (writerExtensions opts) }
+      in blockToMarkdown' opts' $
+           Div (ident, ["equation"], []) [Para [Math DisplayMath str]]
 blockToMarkdown' opts (Para inlines) =
   (<> blankline) `fmap` blockToMarkdown opts (Plain inlines)
 blockToMarkdown' opts (LineBlock lns) = do
