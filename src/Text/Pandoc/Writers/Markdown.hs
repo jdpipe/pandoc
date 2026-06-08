@@ -210,14 +210,59 @@ tableDiv (Table (ident, classes, kvs) capt specs thead tbody tfoot) extras =
   in Div (ident, ["table"] `union` classes, kvs) (caption ++ table : extras)
 tableDiv block _ = block
 
-equationLabel :: Text -> Maybe Text
-equationLabel str =
+equationLabelAndMath :: Text -> Maybe (Text, Text)
+equationLabelAndMath str =
   case T.breakOn "\\label{" str of
        (_, rest)
          | not (T.null rest) ->
-             let label = T.takeWhile (/= '}') $ T.drop 7 rest
-             in if T.null label then Nothing else Just label
+             let before = fst $ T.breakOn "\\label{" str
+                 labelAndAfter = T.drop 7 rest
+                 label = T.takeWhile (/= '}') labelAndAfter
+                 afterBrace = T.dropWhile (/= '}') labelAndAfter
+                 after = T.drop 1 afterBrace
+                 math = stripOuterEquationEnv $ T.strip $ before <> after
+             in if T.null label || T.null afterBrace
+                   then Nothing
+                   else Just (label, math)
        _ -> Nothing
+
+stripOuterEquationEnv :: Text -> Text
+stripOuterEquationEnv str =
+  fromMaybe str $ foldr stripOne Nothing ["equation", "equation*", "displaymath"]
+ where
+  stripOne name Nothing =
+    let open = "\\begin{" <> name <> "}"
+        close = "\\end{" <> name <> "}"
+        stripped = T.strip str
+    in case T.stripPrefix open stripped of
+         Just rest
+           | Just inner <- T.stripSuffix close rest -> Just $ T.strip inner
+         _ -> Nothing
+  stripOne _ result = result
+
+splitLabelledEquationInlines :: [Inline] -> Maybe [Block]
+splitLabelledEquationInlines = go False [] []
+ where
+  go found blocks current [] =
+    let blocks' = appendPara current blocks
+    in if found then Just blocks' else Nothing
+  go _found blocks current (Math DisplayMath str : rest)
+    | Just (ident, mathStr) <- equationLabelAndMath str =
+        let blocks' = appendPara current blocks ++
+              [Div (ident, ["equation"], []) [Para [Math DisplayMath mathStr]]]
+        in go True blocks' [] rest
+  go found blocks current (inline : rest) =
+    go found blocks (current ++ [inline]) rest
+
+  appendPara [] blocks = blocks
+  appendPara inlines blocks = blocks ++ [Para (trimParaInlines inlines)]
+
+  trimParaInlines =
+    reverse . dropWhile isSpaceOrSoftBreak . reverse . dropWhile isSpaceOrSoftBreak
+
+  isSpaceOrSoftBreak Space = True
+  isSpaceOrSoftBreak SoftBreak = True
+  isSpaceOrSoftBreak _ = False
 
 yamlMetadataBlock :: Context Text -> Doc Text
 yamlMetadataBlock v = "---" $$ contextToYaml v $$ "---"
@@ -519,12 +564,19 @@ blockToMarkdown' opts (Plain inlines) = do
   return $ contents <> cr
 blockToMarkdown' opts (Para [Math DisplayMath str])
   | isEnabled Ext_equation_divs opts
-  , Just ident <- equationLabel str =
+  , Just (ident, mathStr) <- equationLabelAndMath str =
       let opts' = opts{ writerExtensions =
                           disableExtension Ext_equation_divs
                             (writerExtensions opts) }
       in blockToMarkdown' opts' $
-           Div (ident, ["equation"], []) [Para [Math DisplayMath str]]
+           Div (ident, ["equation"], []) [Para [Math DisplayMath mathStr]]
+blockToMarkdown' opts (Para inlines)
+  | isEnabled Ext_equation_divs opts
+  , Just blocks <- splitLabelledEquationInlines inlines =
+      let opts' = opts{ writerExtensions =
+                          disableExtension Ext_equation_divs
+                            (writerExtensions opts) }
+      in blockListToMarkdown opts' blocks
 blockToMarkdown' opts (Para inlines) =
   (<> blankline) `fmap` blockToMarkdown opts (Plain inlines)
 blockToMarkdown' opts (LineBlock lns) = do

@@ -185,11 +185,22 @@ E = mc^2
 See Eq. \ref{eq:foo}.
 ^D
 ::: {#eq:foo .equation}
-$$\begin{equation}
-\label{eq:foo}
-E = mc^2
-\end{equation}$$
+$$E = mc^2$$
 :::
 
 See Eq. [](#eq:foo){reference-type="ref" reference="eq:foo"}.
+```
+
+```
+% pandoc -f latex -t commonmark_x+equation_divs --wrap=none
+power at the design point, which is calculated as: \begin{equation}
+\dot{W}_\mathrm{mc,des} = f_\mathrm{fan} \cdot \dot{W}_\mathrm{gross}
+\label{Wfan}
+\end{equation}
+^D
+power at the design point, which is calculated as:
+
+::: {#Wfan .equation}
+$$\dot{W}_\mathrm{mc,des} = f_\mathrm{fan} \cdot \dot{W}_\mathrm{gross}$$
+:::
 ```
