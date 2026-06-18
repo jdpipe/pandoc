@@ -23,6 +23,10 @@ tests =
       arch <- odfArchive $ para (displayMath "x^2")
       settings arch @?~ "config:name=\"IsTextMode\" config:type=\"boolean\">false"
       content arch @?~ "display=\"block\""
+  , testCase "includes StarMath annotation" $ do
+      arch <- odfArchive $ para (displayMath "\\frac{a}{b}")
+      content arch @?~ "<semantics>"
+      content arch @?~ "<annotation encoding=\"StarMath 5.0\">{a over b}</annotation>"
   , testCase "base font height is optional" $ do
       arch <- odfArchiveWith
         def{ writerVariables =

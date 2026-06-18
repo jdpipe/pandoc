@@ -36,7 +36,7 @@ import Text.Pandoc.UTF8 (fromStringLazy)
 import Text.Pandoc.Walk (query)
 import Text.Pandoc.Writers.Shared (lookupMetaString)
 import Text.Pandoc.XML
-import Text.TeXMath (DisplayType(..), readTeX, writeMathML)
+import Text.TeXMath (DisplayType(..), readTeX, writeMathML, writeStarMath)
 import qualified Text.XML.Light as XL
 
 -- | Produce an OpenDocument Formula file from the first math element in
@@ -62,7 +62,8 @@ writeODF opts doc@(Pandoc meta _) =
                      InlineMath  -> DisplayInline
                      DisplayMath -> DisplayBlock
           let conf = XL.useShortEmptyTags (const False) XL.defaultConfigPP
-          let mathml = XL.ppcTopElement conf $ writeMathML dt exps
+          let mathml = XL.ppcTopElement conf $
+                annotateMathML (writeMathML dt exps) (writeStarMath dt exps)
           let isTextMode = mathType == InlineMath
           mbBaseFontHeight <- formulaBaseFontHeightFrom opts meta
           let mimetypeEntry = toEntry "mimetype" epochtime $
@@ -87,6 +88,25 @@ firstMath doc =
  where
   go (Math mathType math) = [(mathType, math)]
   go _                    = []
+
+-- | Annotate MathML with the StarMath source used by LibreOffice's formula
+-- editor. This keeps imported formulas editable without forcing LibreOffice
+-- to reconstruct source from the MathML tree.
+annotateMathML :: XL.Element -> T.Text -> XL.Element
+annotateMathML e starmath =
+  math $ XL.unode "semantics"
+    [ cs
+    , XL.unode "annotation" (annotAttrs, T.unpack starmath)
+    ]
+ where
+  cs = case XL.elChildren e of
+         []  -> XL.unode "mrow" ()
+         [x] -> x
+         xs  -> XL.unode "mrow" xs
+  math childs = XL.Element q as [XL.Elem childs] l
+    where
+      XL.Element q as _ l = e
+  annotAttrs = [XL.Attr (XL.unqual "encoding") "StarMath 5.0"]
 
 formulaBaseFontHeightFrom :: PandocMonad m => WriterOptions -> Meta -> m (Maybe Int)
 formulaBaseFontHeightFrom opts meta =
