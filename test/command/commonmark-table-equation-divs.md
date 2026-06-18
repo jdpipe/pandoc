@@ -204,3 +204,14 @@ power at the design point, which is calculated as:
 $$\dot{W}_\mathrm{mc,des} = f_\mathrm{fan} \cdot \dot{W}_\mathrm{gross}$$
 :::
 ```
+
+```
+% pandoc -f commonmark_x -t native
+$$
+a
+-
+b
+$$
+^D
+[ Para [ Math DisplayMath "a\n-\nb" ] ]
+```

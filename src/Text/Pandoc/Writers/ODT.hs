@@ -44,6 +44,7 @@ import Text.Pandoc.Writers.Shared (lookupMetaString, lookupMetaBlocks,
                                    ensureValidXmlIdentifiers)
 import Text.Pandoc.UTF8 (fromStringLazy, fromTextLazy, toTextLazy)
 import Text.Pandoc.Walk
+import Text.Pandoc.Writers.ODF (formulaDocumentSettings)
 import Text.Pandoc.Writers.OpenDocument (writeOpenDocument)
 import Text.Pandoc.XML
 import Text.Pandoc.XML.Light
@@ -360,7 +361,8 @@ transformPicMath _ (Math t math) = do
          let fname = dirname ++ "content.xml"
          let entry = toEntry fname epochtime (fromStringLazy mathml)
          let fname' = dirname ++ "settings.xml"
-         let entry' = toEntry fname' epochtime $ documentSettings (t == InlineMath)
+         let entry' = toEntry fname' epochtime $
+               formulaDocumentSettings (t == InlineMath) Nothing
          modify $ \st -> st{ stEntries = entry' : (entry : entries) }
          return $ RawInline (Format "opendocument") $ render Nothing $
            inTags False "draw:frame" (if t == DisplayMath
@@ -378,23 +380,6 @@ transformPicMath _ (Math t math) = do
                                         , ("xlink:actuate", "onLoad")]
 
 transformPicMath _ x = return x
-
-documentSettings :: Bool -> B.ByteString
-documentSettings isTextMode = fromStringLazy $ render Nothing
-    $ text "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-    $$
-    inTags True "office:document-settings"
-      [("xmlns:office","urn:oasis:names:tc:opendocument:xmlns:office:1.0")
-      ,("xmlns:xlink","http://www.w3.org/1999/xlink")
-      ,("xmlns:config","urn:oasis:names:tc:opendocument:xmlns:config:1.0")
-      ,("xmlns:ooo","http://openoffice.org/2004/office")
-      ,("office:version","1.3")] (
-       inTagsSimple "office:settings" $
-         inTags False "config:config-item-set"
-           [("config:name", "ooo:configuration-settings")] $
-           inTags False "config:config-item" [("config:name", "IsTextMode")
-                                             ,("config:type", "boolean")] $
-                                              text $ if isTextMode then "true" else "false")
 
 styleToOpenDocument :: Style -> [Content]
 styleToOpenDocument style = map (Elem . toStyle) alltoktypes

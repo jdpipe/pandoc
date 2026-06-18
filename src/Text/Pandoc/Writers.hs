@@ -61,6 +61,7 @@ module Text.Pandoc.Writers
     , writeMuse
     , writeNative
     , writeODT
+    , writeODF
     , writeOPML
     , writeOpenDocument
     , writeOrg
@@ -72,6 +73,7 @@ module Text.Pandoc.Writers
     , writeS5
     , writeSlideous
     , writeSlidy
+    , writeStarMath
     , writeTEI
     , writeTexinfo
     , writeTextile
@@ -125,6 +127,7 @@ import Text.Pandoc.Writers.MediaWiki
 import Text.Pandoc.Writers.Ms
 import Text.Pandoc.Writers.Muse
 import Text.Pandoc.Writers.Native
+import Text.Pandoc.Writers.ODF
 import Text.Pandoc.Writers.ODT
 import Text.Pandoc.Writers.OpenDocument
 import Text.Pandoc.Writers.OPML
@@ -132,6 +135,7 @@ import Text.Pandoc.Writers.Org
 import Text.Pandoc.Writers.Powerpoint
 import Text.Pandoc.Writers.RST
 import Text.Pandoc.Writers.RTF
+import Text.Pandoc.Writers.StarMath
 import Text.Pandoc.Writers.TEI
 import Text.Pandoc.Writers.Texinfo
 import Text.Pandoc.Writers.Textile
@@ -158,6 +162,7 @@ writers = [
    ("native"       , TextWriter writeNative)
   ,("json"         , TextWriter writeJSON)
   ,("docx"         , ByteStringWriter writeDocx)
+  ,("odf"          , ByteStringWriter writeODF)
   ,("odt"          , ByteStringWriter writeODT)
   ,("pptx"         , ByteStringWriter writePowerpoint)
   ,("epub"         , ByteStringWriter writeEPUB3)
@@ -171,6 +176,7 @@ writers = [
   ,("icml"         , TextWriter writeICML)
   ,("s5"           , TextWriter writeS5)
   ,("slidy"        , TextWriter writeSlidy)
+  ,("starmath"     , TextWriter writeStarMath)
   ,("slideous"     , TextWriter writeSlideous)
   ,("dzslides"     , TextWriter writeDZSlides)
   ,("revealjs"     , TextWriter writeRevealJs)

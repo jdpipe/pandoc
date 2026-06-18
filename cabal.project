@@ -1,4 +1,5 @@
 packages: .
+          ../texmath
           pandoc-lua-engine
           pandoc-server
           pandoc-cli

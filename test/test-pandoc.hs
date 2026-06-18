@@ -45,11 +45,13 @@ import qualified Tests.Writers.Markdown
 import qualified Tests.Writers.Ms
 import qualified Tests.Writers.Muse
 import qualified Tests.Writers.Native
+import qualified Tests.Writers.ODF
 import qualified Tests.Writers.Org
 import qualified Tests.Writers.Plain
 import qualified Tests.Writers.Powerpoint
 import qualified Tests.Writers.RST
 import qualified Tests.Writers.AnnotatedTable
+import qualified Tests.Writers.StarMath
 import qualified Tests.Writers.TEI
 import qualified Tests.Writers.Markua
 import qualified Tests.Writers.BBCode
@@ -76,8 +78,10 @@ tests pandocPath = testGroup "pandoc tests"
           , testGroup "Org" Tests.Writers.Org.tests
           , testGroup "Plain" Tests.Writers.Plain.tests
           , testGroup "AsciiDoc" Tests.Writers.AsciiDoc.tests
+          , testGroup "ODF" Tests.Writers.ODF.tests
           , testGroup "Docx" Tests.Writers.Docx.tests
           , testGroup "RST" Tests.Writers.RST.tests
+          , testGroup "StarMath" Tests.Writers.StarMath.tests
           , testGroup "TEI" Tests.Writers.TEI.tests
           , testGroup "markua" Tests.Writers.Markua.tests
           , testGroup "Muse" Tests.Writers.Muse.tests

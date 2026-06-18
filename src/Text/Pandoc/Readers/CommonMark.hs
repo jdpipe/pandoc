@@ -19,25 +19,29 @@ module Text.Pandoc.Readers.CommonMark (readCommonMark)
 where
 
 import Commonmark
+import Commonmark.Blocks
 import Commonmark.Extensions
+import qualified Commonmark.Extensions.Math as CMath
 import Commonmark.Inlines (InlineParser)
 import Commonmark.Pandoc
-import Commonmark.TokParsers (satisfyTok, symbol)
+import Commonmark.TokParsers (hasType, lineEnd, nonindentSpaces,
+                              satisfyTok, skipWhile, symbol)
 import Control.Applicative ((<|>))
+import Control.Monad (MonadPlus(mzero), (<=<), void)
+import Control.Monad.Except (  MonadError(throwError) )
+import Control.Monad.State.Strict (State, evalState, get, put)
 import Data.Char (isAlphaNum, isSpace)
+import Data.Functor.Identity (Identity, runIdentity)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Tree (Tree(Node))
+import Data.Typeable
+import Text.Pandoc.Builder as B
 import Text.Pandoc.Class.PandocMonad (PandocMonad)
 import Text.Pandoc.Definition
 import qualified Text.Pandoc.Definition as D
-import Text.Pandoc.Builder as B
 import Text.Pandoc.Options
 import Text.Pandoc.Readers.Metadata (yamlMetaBlock)
-import Control.Monad (MonadPlus(mzero), (<=<))
-import Control.Monad.Except (  MonadError(throwError) )
-import Control.Monad.State.Strict (State, evalState, get, put)
-import Data.Functor.Identity (Identity, runIdentity)
-import Data.Typeable
 import Text.Pandoc.Parsing.Citations (citeKey)
 import Text.Pandoc.Parsing.State (ParserState)
 import Text.Pandoc.Parsing (runParserT, getInput, getPosition,
@@ -351,6 +355,46 @@ handleGfmMathInline (Math InlineMath math'') =
                 _ -> Math InlineMath math'
 handleGfmMathInline x = x
 
+displayMathBlockSpec :: (Monad m, IsBlock il bl, CMath.HasMath il)
+                     => BlockSpec m il bl
+displayMathBlockSpec = BlockSpec
+     { blockType           = "DisplayMath"
+     , blockStart          = try $ do
+             nonindentSpaces
+             pos <- getPosition
+             symbol '$'
+             symbol '$'
+             skipWhile (hasType Spaces)
+             lookAhead $ void lineEnd <|> eof
+             addNodeToStack $ Node (defBlockData displayMathBlockSpec){
+                                  blockStartPos = [pos] } []
+             return BlockStartMatch
+     , blockCanContain     = const False
+     , blockContainsLines  = True
+     , blockParagraph      = False
+     , blockContinue       = \node -> try (do
+             nonindentSpaces
+             pos <- getPosition
+             symbol '$'
+             symbol '$'
+             skipWhile (hasType Spaces)
+             lookAhead $ void lineEnd <|> eof
+             endOfBlock
+             return (pos, node))
+           <|> do
+             pos <- getPosition
+             return (pos, node)
+     , blockConstructor    = \node ->
+             return $ paragraph $ CMath.displayMath $
+               T.stripEnd $ untokenize $ drop 1 $ getBlockText node
+     , blockFinalize       = defaultFinalizer
+     }
+
+displayMathBlockSyntaxSpec :: (Monad m, IsBlock il bl, CMath.HasMath il)
+                           => SyntaxSpec m il bl
+displayMathBlockSyntaxSpec = mempty
+  { syntaxBlockSpecs = [displayMathBlockSpec] }
+
 stripBlockComments :: Block -> Block
 stripBlockComments (RawBlock (B.Format "html") s) =
   RawBlock (B.Format "html") (removeComments s)
@@ -385,7 +429,8 @@ specFor opts = foldr ($) defaultSyntaxSpec exts
          [ (strikethroughSpec <>) | isEnabled Ext_strikeout opts ] ++
          [ (superscriptSpec <>) | isEnabled Ext_superscript opts ] ++
          [ (subscriptSpec <>) | isEnabled Ext_subscript opts ] ++
-         [ (mathSpec <>) | isEnabled Ext_tex_math_dollars opts ] ++
+         [ (displayMathBlockSyntaxSpec <>) . (mathSpec <>)
+           | isEnabled Ext_tex_math_dollars opts ] ++
          [ (fancyListSpec <>) | isEnabled Ext_fancy_lists opts ] ++
          [ (fencedDivSpec <>) | isEnabled Ext_fenced_divs opts ] ++
          [ (bracketedSpanSpec <>) | isEnabled Ext_bracketed_spans opts ] ++
