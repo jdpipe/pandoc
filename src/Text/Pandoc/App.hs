@@ -300,7 +300,7 @@ convertWithOpts' scriptingEngine istty datadir opts = do
           >>= ( return . adjustMetadata (metadataFromFile <>)
             >=> return . adjustMetadata (<> optMetadata opts)
             >=> return . adjustMetadata (<> cslMetadata)
-            >=> applyFilters scriptingEngine filterEnv filters [T.unpack format]
+            >=> applyFilters scriptingEngine filterEnv (optCitationResolver opts) filters [T.unpack format]
             >=> applyTransforms transforms
             >=> (if not (optSandbox opts) &&
                     (isJust (optExtractMedia opts)

@@ -154,6 +154,7 @@ data Opt = Opt
     , optWrap                  :: WrapOption  -- ^ Options for wrapping text
     , optColumns               :: Int     -- ^ Line length in characters
     , optFilters               :: [Filter] -- ^ Filters to apply
+    , optCitationResolver      :: Maybe FilePath -- ^ Citation resolver executable
     , optEmailObfuscation      :: ObfuscationMethod
     , optIdentifierPrefix      :: Text
     , optIndentedCodeClasses   :: [Text] -- ^ Default classes for indented code blocks
@@ -242,6 +243,7 @@ instance FromJSON Opt where
        <*> o .:? "wrap" .!= optWrap defaultOpts
        <*> o .:? "columns" .!= optColumns defaultOpts
        <*> o .:? "filters" .!= optFilters defaultOpts
+       <*> o .:? "citation-resolver"
        <*> o .:? "email-obfuscation" .!= optEmailObfuscation defaultOpts
        <*> o .:? "identifier-prefix" .!= optIdentifierPrefix defaultOpts
        <*> o .:? "indented-code-classes" .!= optIndentedCodeClasses defaultOpts
@@ -329,6 +331,7 @@ resolveVarsInOpt
     , optEpubCoverImage        = oEpubCoverImage
     , optLogFile               = oLogFile
     , optFilters               = oFilters
+    , optCitationResolver      = oCitationResolver
     , optDataDir               = oDataDir
     , optExtractMedia          = oExtractMedia
     , optCss                   = oCss
@@ -356,6 +359,7 @@ resolveVarsInOpt
       oEpubCoverImage' <- mapM resolveVars oEpubCoverImage
       oLogFile' <- mapM resolveVars oLogFile
       oFilters' <- mapM resolveVarsInFilter oFilters
+      oCitationResolver' <- mapM resolveVars oCitationResolver
       oDataDir' <- mapM resolveVars oDataDir
       oExtractMedia' <- mapM resolveVars oExtractMedia
       oCss' <- mapM resolveVars oCss
@@ -383,6 +387,7 @@ resolveVarsInOpt
                 , optEpubCoverImage        = oEpubCoverImage'
                 , optLogFile               = oLogFile'
                 , optFilters               = oFilters'
+                , optCitationResolver      = oCitationResolver'
                 , optDataDir               = oDataDir'
                 , optExtractMedia          = oExtractMedia'
                 , optCss                   = oCss'
@@ -645,6 +650,8 @@ doOpt (k,v) = do
       parseJSON v >>= \x -> return (\o -> o{ optColumns = x })
     "filters" ->
       parseJSON v >>= \x -> return (\o -> o{ optFilters = optFilters o <> x })
+    "citation-resolver" ->
+      parseJSON v >>= \x -> return (\o -> o{ optCitationResolver = unpack <$> x })
     "citeproc" ->
       parseJSON v >>= \x ->
         if x
@@ -820,6 +827,7 @@ defaultOpts = Opt
     , optWrap                  = WrapAuto
     , optColumns               = 72
     , optFilters               = []
+    , optCitationResolver      = Nothing
     , optEmailObfuscation      = NoObfuscation
     , optIdentifierPrefix      = ""
     , optIndentedCodeClasses   = []

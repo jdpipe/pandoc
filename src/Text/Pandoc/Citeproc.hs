@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Text.Pandoc.Citeproc
   ( processCitations,
+    processCitationsWithResolver,
     getReferences,
   )
 where
@@ -31,12 +32,16 @@ import Text.Pandoc.Extensions (pandocExtensions)
 import Text.Pandoc.Logging (LogMessage(..))
 import Text.Pandoc.Options (ReaderOptions(..))
 import Text.Pandoc.Shared (stringify, tshow, makeSections)
+import Text.Pandoc.Process (pipeProcess)
 import Data.Containers.ListUtils (nubOrd)
 import Text.Pandoc.Walk (query, walk, walkM)
 import Control.Applicative ((<|>))
+import qualified Control.Exception as E
 import Control.Monad.Except (catchError, throwError)
+import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad.State (State, evalState, get, put, runState)
-import Data.Aeson (eitherDecode)
+import Data.Aeson (FromJSON(..), Value, eitherDecode, encode, object,
+                   withObject, (.:), (.:?), (.=))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as L
 import Data.Char (isPunctuation, isUpper)
@@ -49,20 +54,53 @@ import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
+import System.Exit (ExitCode(..))
 import System.FilePath (takeExtension)
 import Safe (lastMay, initSafe)
 
-processCitations  :: PandocMonad m => Pandoc -> m Pandoc
-processCitations (Pandoc meta bs) = do
-  style <- getStyle (Pandoc meta bs)
+
+data ResolverResponse = ResolverResponse
+  { resolverReferences :: Value
+  , resolverWarnings :: [Text]
+  }
+
+instance FromJSON ResolverResponse where
+  parseJSON = withObject "citation resolver response" $ \o ->
+    ResolverResponse
+      <$> o .: "references"
+      <*> fmap (fromMaybe []) (o .:? "warnings")
+
+processCitations :: PandocMonad m => Pandoc -> m Pandoc
+processCitations doc@(Pandoc meta _) = do
+  style <- getStyle doc
   mblang <- getCiteprocLang meta
   let locale = Citeproc.mergeLocales mblang style
-
-  let addQuoteSpan (Quoted _ xs) = Span ("",["csl-quoted"],[]) xs
+      addQuoteSpan (Quoted _ xs) = Span ("",["csl-quoted"],[]) xs
       addQuoteSpan x = x
   refs <- map (walk addQuoteSpan) <$>
-          getReferences (Just locale) (Pandoc meta bs)
+          getReferences (Just locale) doc
+  processCitationsWithReferences style mblang locale refs doc
 
+processCitationsWithResolver :: (PandocMonad m, MonadIO m)
+                             => Maybe FilePath -> Pandoc -> m Pandoc
+processCitationsWithResolver citationResolver doc@(Pandoc meta _) = do
+  style <- getStyle doc
+  mblang <- getCiteprocLang meta
+  let locale = Citeproc.mergeLocales mblang style
+      addQuoteSpan (Quoted _ xs) = Span ("",["csl-quoted"],[]) xs
+      addQuoteSpan x = x
+  refs <- map (walk addQuoteSpan) <$>
+          getReferencesWithResolver citationResolver (Just locale) doc
+  processCitationsWithReferences style mblang locale refs doc
+
+processCitationsWithReferences :: PandocMonad m
+                                => Style Inlines
+                                -> Maybe Lang
+                                -> Locale
+                                -> [Reference Inlines]
+                                -> Pandoc
+                                -> m Pandoc
+processCitationsWithReferences style mblang locale refs (Pandoc meta bs) = do
   let otherIdsMap = foldr (\ref m ->
                              case T.words . extractText <$>
                                   M.lookup "other-ids"
@@ -114,7 +152,6 @@ processCitations (Pandoc meta bs) = do
   return $ walk removeQuoteSpan
          $ insertRefs refkvs classes (B.toList bibs)
          $ Pandoc meta'' bs'
-
 removeQuoteSpan :: Inline -> Inline
 removeQuoteSpan (Span ("",["csl-quoted"],[]) xs) = Span nullAttr xs
 removeQuoteSpan x = x
@@ -183,7 +220,23 @@ getCiteprocLang meta = maybe (return Nothing) bcp47LangToIETF
 -- URL variables are converted to links.
 getReferences :: PandocMonad m
               => Maybe Locale -> Pandoc -> m [Reference Inlines]
-getReferences mblocale (Pandoc meta bs) = do
+getReferences mblocale doc = do
+  (refs, _) <- getReferencesBase mblocale doc
+  return $ map legacyDateRanges refs
+
+getReferencesWithResolver :: (PandocMonad m, MonadIO m)
+              => Maybe FilePath -> Maybe Locale -> Pandoc -> m [Reference Inlines]
+getReferencesWithResolver citationResolver mblocale doc = do
+  (existingRefs, missingIds) <- getReferencesBase mblocale doc
+  resolverRefs <- maybe (return [])
+                        (getRefsFromResolver missingIds)
+                        citationResolver
+  return $ map legacyDateRanges (existingRefs ++ resolverRefs)
+            -- note that inlineRefs can override externalRefs
+
+getReferencesBase :: PandocMonad m
+                  => Maybe Locale -> Pandoc -> m ([Reference Inlines], [Text])
+getReferencesBase mblocale (Pandoc meta bs) = do
   locale <- case mblocale of
                 Just l  -> return l
                 Nothing -> do
@@ -215,9 +268,11 @@ getReferences mblocale (Pandoc meta bs) = do
                         Just fp -> getRefsFromBib locale idpred fp
                         Nothing -> return []
                     Nothing -> return []
-  return $ map legacyDateRanges (externalRefs ++ inlineRefs)
-            -- note that inlineRefs can override externalRefs
-
+  let existingRefs = externalRefs ++ inlineRefs
+      existingIds = Set.fromList $ map (unItemId . referenceId) existingRefs
+      requestedIds = Set.delete "*" (citeIds <> nocites)
+      missingIds = Set.toList $ Set.difference requestedIds existingIds
+  return (existingRefs, missingIds)
 
 
 -- If we have a span.csl-left-margin followed by span.csl-right-inline,
@@ -245,6 +300,38 @@ getRefsFromBib locale idpred fp = do
     Just f -> getRefs locale f idpred (Just fp) raw
     Nothing -> throwError $ PandocAppError $
                  "Could not determine bibliography format for " <> fp
+
+getRefsFromResolver :: (PandocMonad m, MonadIO m)
+                    => [Text] -> FilePath -> m [Reference Inlines]
+getRefsFromResolver [] _ = return []
+getRefsFromResolver citationIds resolver = do
+  let request = object
+        [ "version" .= (1 :: Int)
+        , "citations" .= citationIds
+        ]
+  result <- liftIO $ E.try $ pipeProcess Nothing resolver [] (encode request)
+  (exitCode, raw) <- case result of
+    Left (err :: E.SomeException) ->
+      throwError $ PandocAppError $
+        "Could not run citation resolver " <> T.pack resolver <> ": " <> tshow err
+    Right x -> return x
+  case exitCode of
+    ExitFailure ec ->
+      throwError $ PandocAppError $
+        "Citation resolver " <> T.pack resolver
+        <> " returned error status " <> tshow ec
+    ExitSuccess -> do
+      response <- case eitherDecode raw of
+        Left err -> throwError $ PandocAppError $
+          "Could not parse citation resolver output from " <> T.pack resolver
+          <> ": " <> T.pack err
+        Right response -> return response
+      mapM_ (report . CiteprocWarning) (resolverWarnings response)
+      case cslJsonToReferences (L.toStrict $ encode $ resolverReferences response) of
+        Left err -> throwError $ PandocBibliographyError (T.pack resolver) (T.pack err)
+        Right refs -> do
+          let requested = Set.fromList citationIds
+          return $ filter (flip Set.member requested . unItemId . referenceId) refs
 
 getRefs :: PandocMonad m
         => Locale

@@ -28,7 +28,7 @@ import Text.Pandoc.Class (PandocMonad, findFileWithDataFallback, getVerbosity,
 import Text.Pandoc.Definition (Pandoc)
 import Text.Pandoc.Filter.Environment (Environment (..))
 import Text.Pandoc.Logging
-import Text.Pandoc.Citeproc (processCitations)
+import Text.Pandoc.Citeproc (processCitationsWithResolver)
 import Text.Pandoc.Scripting (ScriptingEngine (engineApplyFilter))
 import qualified Text.Pandoc.Filter.JSON as JSONFilter
 import qualified Data.Text as T
@@ -76,11 +76,12 @@ instance ToJSON Filter where
 applyFilters :: (PandocMonad m, MonadIO m)
              => ScriptingEngine
              -> Environment
+             -> Maybe FilePath
              -> [Filter]
              -> [String]
              -> Pandoc
              -> m Pandoc
-applyFilters scrngin fenv filters args d = do
+applyFilters scrngin fenv citationResolver filters args d = do
   expandedFilters <- mapM expandFilterPath filters
   foldM applyFilter d expandedFilters
  where
@@ -89,7 +90,7 @@ applyFilters scrngin fenv filters args d = do
   applyFilter doc (LuaFilter f)  =
     withMessages f $ engineApplyFilter scrngin fenv args f doc
   applyFilter doc CiteprocFilter =
-    withMessages "citeproc" $ processCitations doc
+    withMessages "citeproc" $ processCitationsWithResolver citationResolver doc
   withMessages f action = do
     verbosity <- getVerbosity
     when (verbosity == INFO) $ report $ RunningFilter f

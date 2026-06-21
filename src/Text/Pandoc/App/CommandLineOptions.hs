@@ -1004,6 +1004,13 @@ options =
                       optFilters opt ++ [CiteprocFilter] }))
                  "" -- "Process citations"
 
+    , Option "" ["citation-resolver"]
+                 (ReqArg
+                  (\arg opt -> return opt{ optCitationResolver =
+                                             Just (normalizePath arg) })
+                  "PROGRAM")
+                 "" -- "Executable used to resolve missing citation references"
+
     , Option "" ["bibliography"]
                  (ReqArg
                   (\arg opt -> return opt{ optMetadata =
