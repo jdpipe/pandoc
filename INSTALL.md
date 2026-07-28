@@ -274,6 +274,16 @@ The easiest way to build pandoc from source is to use [stack][stack]:
     the above command -- cabal will use the local code for all
     projects mentioned in the `cabal.project`.
 
+    When iterating on a local checkout, it can be faster to build the
+    executable in place and copy the resulting binary into your local
+    path:
+
+        cabal v2-build exe:pandoc
+        install -m 755 "$(cabal list-bin exe:pandoc)" "$HOME/.local/bin/pandoc"
+
+    This avoids a separate `cabal install` step.  Make sure
+    `$HOME/.local/bin` is in your `PATH`.
+
 4.  You should now be able to run `pandoc`:
 
         pandoc --help
