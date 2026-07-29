@@ -3,6 +3,11 @@ PANDOC_CLI_VERSION?=$(shell grep '^[Vv]ersion:' pandoc-cli/pandoc-cli.cabal | aw
 SOURCEFILES?=$(shell git ls-tree -r main --name-only src pandoc-cli pandoc-server pandoc-lua-engine | grep "\.hs$$")
 PANDOCSOURCEFILES?=$(shell git ls-tree -r main --name-only src | grep "\.hs$$")
 DOCKERIMAGE=quay.io/benz0li/ghc-musl:9.10
+JDPIPE_DOCKERIMAGE=quay.io/benz0li/ghc-musl:9.10@sha256:2524e20bdd541a21d8e1109b40374961af2105930c4b1eac8e48324efe53dc1c
+JDPIPE_TEXMATH_DIR?=../texmath
+JDPIPE_ARTIFACTS_DIR?=$(CURDIR)/linux/artifacts
+JDPIPE_CABAL_DIR?=$(CURDIR)/linux/cabal-cache
+JDPIPE_INDEX_STATE?=2026-07-28T11:22:37Z
 TIMESTAMP=$(shell date "+%Y%m%d_%H%M")
 LATESTBENCH=$(word 1,$(shell ls -t bench_*.csv 2>/dev/null))
 BASELINE?=$(LATESTBENCH)
@@ -170,6 +175,32 @@ debpkg: ## create linux package
 		   bash \
 		   /mnt/linux/make_artifacts.sh
 .PHONY: debpkg
+
+jdpipe-static: ## create a static pandoc-jdpipe tarball
+	@test -d "$(JDPIPE_TEXMATH_DIR)" || \
+	  (echo "Missing patched texmath checkout: $(JDPIPE_TEXMATH_DIR)" >&2; exit 1)
+	mkdir -p "$(JDPIPE_ARTIFACTS_DIR)" "$(JDPIPE_CABAL_DIR)"
+	docker run \
+		   --cpus=1 \
+		   -v "$(CURDIR):/mnt" \
+		   -v "$(abspath $(JDPIPE_TEXMATH_DIR)):/texmath:ro" \
+		   -v "$(abspath $(JDPIPE_ARTIFACTS_DIR)):/artifacts" \
+		   -v "$(abspath $(JDPIPE_CABAL_DIR)):/cabal" \
+		   --user $(shell id -u):$(shell id -g) \
+		   -e HOME=/tmp/jdpipe-builder \
+		   -e CABAL_DIR=/cabal \
+		   -e PANDOC_SOURCE_REVISION=$(shell git rev-parse HEAD) \
+		   -e TEXMATH_SOURCE_REVISION=$(shell git -C "$(JDPIPE_TEXMATH_DIR)" rev-parse HEAD) \
+		   -e SOURCE_DATE_EPOCH=$(shell git log -1 --format=%ct) \
+		   -e JDPIPE_BUILDER_IMAGE=$(JDPIPE_DOCKERIMAGE) \
+		   -e JDPIPE_INDEX_STATE=$(JDPIPE_INDEX_STATE) \
+		   -e CABALOPTS="--index-state=$(JDPIPE_INDEX_STATE) -f-export-dynamic -fembed_data_files -fserver -flua --enable-static --disable-shared --enable-executable-static --enable-optimization=1 -j1 --ghc-option=-j1 --ghc-option=-split-sections --ghc-option=-optc-Os --ghc-option=-optl=-pthread" \
+		   -w /mnt \
+		   --memory=0 \
+		   --rm \
+		   $(JDPIPE_DOCKERIMAGE) \
+		   bash /mnt/linux/make_jdpipe_artifact.sh
+.PHONY: jdpipe-static
 
 pandoc-cli/man/pandoc.1: MANUAL.txt man/pandoc.1.before man/pandoc.1.after pandoc.cabal
 	$(pandoc) $< -f markdown -t man -s \

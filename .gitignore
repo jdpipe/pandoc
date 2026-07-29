@@ -11,7 +11,8 @@
 !.envrc
 !.editorconfig
 !.gitattributes
-!.github/**
+!/.github/
+!/.github/**
 !.gitignore
 !.hlint.yaml
 !.mailmap
@@ -47,6 +48,8 @@
 !data/**
 !doc/**
 !linux/**
+/linux/artifacts/
+/linux/cabal-cache/
 !macos/**
 !man/**
 !pandoc-lua-engine/**

@@ -1,0 +1,81 @@
+name: pandoc-jdpipe static Linux
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'pandoc-jdpipe-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out Pandoc
+        uses: actions/checkout@v6
+        with:
+          path: pandoc
+
+      - name: Check out patched texmath
+        uses: actions/checkout@v6
+        with:
+          repository: jdpipe/texmath
+          path: texmath
+          fetch-depth: 0
+
+      - name: Select the pinned texmath revision
+        shell: bash
+        run: |
+          revision=$(tr -d '[:space:]' < pandoc/linux/jdpipe-texmath-revision)
+          git -C texmath checkout --detach "$revision"
+          test "$(git -C texmath rev-parse HEAD)" = "$revision"
+
+      - name: Restore Cabal dependency cache
+        uses: actions/cache@v5
+        with:
+          path: pandoc/linux/cabal-cache
+          key: pandoc-jdpipe-linux-amd64-ghc-9.10.3-${{ hashFiles('pandoc/cabal.project', 'pandoc/**/*.cabal', 'pandoc/linux/jdpipe-texmath-revision', 'texmath/*.cabal') }}
+          restore-keys: |
+            pandoc-jdpipe-linux-amd64-ghc-9.10.3-
+
+      - name: Build and verify the static artifact
+        env:
+          JDPIPE_BUILDER_IMAGE: quay.io/benz0li/ghc-musl:9.10@sha256:2524e20bdd541a21d8e1109b40374961af2105930c4b1eac8e48324efe53dc1c
+        run: |
+          make -C pandoc jdpipe-static \
+            JDPIPE_TEXMATH_DIR="$GITHUB_WORKSPACE/texmath" \
+            JDPIPE_DOCKERIMAGE="$JDPIPE_BUILDER_IMAGE"
+
+      - name: Verify checksums
+        run: |
+          cd pandoc/linux/artifacts
+          sha256sum --check ./*.sha256
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pandoc-jdpipe-linux-amd64
+          path: |
+            pandoc/linux/artifacts/*.tar.gz
+            pandoc/linux/artifacts/*.sha256
+          if-no-files-found: error
+
+      - name: Publish tagged GitHub release
+        if: startsWith(github.ref, 'refs/tags/pandoc-jdpipe-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --title "$RELEASE_TAG" \
+              --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" pandoc/linux/artifacts/* --clobber
