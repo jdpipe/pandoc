@@ -21,10 +21,10 @@ jobs:
         with:
           path: pandoc
 
-      - name: Check out patched texmath
+      - name: Check out upstream texmath
         uses: actions/checkout@v6
         with:
-          repository: jdpipe/texmath
+          repository: jgm/texmath
           path: texmath
           fetch-depth: 0
 

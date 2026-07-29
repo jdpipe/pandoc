@@ -1,15 +1,18 @@
 # pandoc-jdpipe static artifacts
 
 This repository can build a statically linked `pandoc-jdpipe` executable with
-the patched Pandoc and texmath readers used by the jdpipe Apostrophe project.
+the patched Pandoc readers used by the jdpipe Apostrophe project and upstream
+texmath's StarMath writer.
 The executable keeps Pandoc's normal command-line behaviour but has a distinct
 name, so installing it does not silently replace a distribution-provided
 `pandoc`.
 
 ## Local build
 
-Docker and the pinned patched texmath checkout are required. By default,
-texmath is expected at `../texmath`:
+Docker and a checkout of upstream texmath are required. The GitHub workflow
+pins the compatible upstream revision recorded in
+`linux/jdpipe-texmath-revision`. For local builds, texmath is expected at
+`../texmath` by default:
 
 ```sh
 make jdpipe-static
@@ -55,4 +58,5 @@ git push origin pandoc-jdpipe-v3.10-r1
 ```
 
 Before making a release, update `linux/jdpipe-texmath-revision` when the build
-requires a newer texmath commit. The workflow checks out that exact revision.
+requires a newer compatible upstream texmath revision. The workflow checks out
+that exact revision from `jgm/texmath`.

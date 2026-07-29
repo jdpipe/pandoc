@@ -178,7 +178,7 @@ debpkg: ## create linux package
 
 jdpipe-static: ## create a static pandoc-jdpipe tarball
 	@test -d "$(JDPIPE_TEXMATH_DIR)" || \
-	  (echo "Missing patched texmath checkout: $(JDPIPE_TEXMATH_DIR)" >&2; exit 1)
+	  (echo "Missing texmath checkout: $(JDPIPE_TEXMATH_DIR)" >&2; exit 1)
 	mkdir -p "$(JDPIPE_ARTIFACTS_DIR)" "$(JDPIPE_CABAL_DIR)"
 	docker run \
 		   --cpus=1 \
